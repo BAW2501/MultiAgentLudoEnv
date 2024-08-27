@@ -5,17 +5,20 @@ from pettingzoo import AECEnv
 from pettingzoo.utils import agent_selector
 from gymnasium import spaces
 
+
 class Player(Enum):
     RED = "red"
     GREEN = "green"
     BLUE = "blue"
     YELLOW = "yellow"
 
+
 NUM_PLAYERS = len(Player)
 NUM_TOKENS = 4
 OUT_OF_BOUNDS = -1
 START_SQUARE = 0
 FINAL_SQUARE = 58
+ILLEGAL_ACTION_PENALTY = -5
 
 class LudoEnv(AECEnv):
     metadata = {"render_modes": ["human"], "name": "ludo_v0"}
@@ -23,23 +26,30 @@ class LudoEnv(AECEnv):
     def __init__(self):
         super().__init__()
         self.possible_agents = [player.value for player in Player]
-        
-        self.action_spaces = {agent: spaces.Discrete(5) for agent in self.possible_agents}
+
+        self.action_spaces = {
+            agent: spaces.Discrete(5) for agent in self.possible_agents
+        }
         self.observation_spaces = {
-            agent: spaces.Dict({
-                "board_state": spaces.Box(
-                    low=OUT_OF_BOUNDS,
-                    high=FINAL_SQUARE,
-                    shape=(NUM_PLAYERS, NUM_TOKENS),
-                    dtype=np.int8,
-                ),
-                "current_player": spaces.Discrete(NUM_PLAYERS),
-                "action_mask": spaces.Box(low=0, high=1, shape=(5,), dtype=np.int8),
-                "last_roll": spaces.Discrete(7),
-            }) for agent in self.possible_agents
+            agent: spaces.Dict(
+                {
+                    "board_state": spaces.Box(
+                        low=OUT_OF_BOUNDS,
+                        high=FINAL_SQUARE,
+                        shape=(NUM_PLAYERS, NUM_TOKENS),
+                        dtype=np.int8,
+                    ),
+                    "current_player": spaces.Discrete(NUM_PLAYERS),
+                    "action_mask": spaces.Box(low=0, high=1, shape=(5,), dtype=np.int8),
+                    "last_roll": spaces.Discrete(7),
+                }
+            )
+            for agent in self.possible_agents
         }
 
-        self.state: np.ndarray = np.full((NUM_PLAYERS, NUM_TOKENS), OUT_OF_BOUNDS, dtype=np.int8)
+        self.state: np.ndarray = np.full(
+            (NUM_PLAYERS, NUM_TOKENS), OUT_OF_BOUNDS, dtype=np.int8
+        )
         self.current_player: str = Player.RED.value
         self.dice_roll: int = 0
         self.agent_selection: str = self.current_player
@@ -71,10 +81,14 @@ class LudoEnv(AECEnv):
             or self.truncations[self.agent_selection]
         ):
             return self._was_dead_step(action)
-        
+
         agent = self.agent_selection
         player_index = self.possible_agents.index(agent)
-
+        # Check if the action is legal
+        if not self._is_action_legal(action):
+            self.rewards[agent] = ILLEGAL_ACTION_PENALTY
+            self._cumulative_rewards[agent] += ILLEGAL_ACTION_PENALTY
+        
         self.dice_roll = np.random.randint(1, 7)
         reward = 0
 
@@ -86,13 +100,15 @@ class LudoEnv(AECEnv):
         elif 1 <= action <= 4:  # Move a token
             token = action - 1
             if self.state[player_index][token] != OUT_OF_BOUNDS:
-                new_pos = self._calculate_new_position(self.state[player_index][token], self.dice_roll)
+                new_pos = self._calculate_new_position(
+                    self.state[player_index][token], self.dice_roll
+                )
                 self.state[player_index][token] = new_pos
-                
+
                 captured = self._check_capture(new_pos)
                 if captured:
                     reward += 1
-                
+
                 if new_pos == FINAL_SQUARE:
                     reward += 2
 
@@ -103,6 +119,10 @@ class LudoEnv(AECEnv):
             self.terminations = {agent: True for agent in self.agents}
         else:
             self.agent_selection = self._agent_selector.next()
+
+    def _is_action_legal(self, action: int) -> bool:
+        mask = self._mask_actions(self.agent_selection)
+        return mask[action] == 1
 
     def observe(self, agent: str) -> Dict:
         return {
@@ -150,29 +170,30 @@ class LudoEnv(AECEnv):
     def _mask_actions(self, agent: str) -> np.ndarray:
         mask = np.zeros(5, dtype=np.int8)
         player_index = self.possible_agents.index(agent)
-        
+
         # if player has any out of bounds pieces and has rolled a 6 then action is allowed
         if np.any(self.state[player_index] == OUT_OF_BOUNDS) and self.dice_roll == 6:
             mask[0] = 1
-        
+
         # if player has a piece inside the board and their dice roll doesn't overshoot final square then action is allowed
         for token in range(NUM_TOKENS):
-            if START_SQUARE <= self.state[player_index][token] <= FINAL_SQUARE - self.dice_roll:
+            if (
+                START_SQUARE
+                <= self.state[player_index][token]
+                <= FINAL_SQUARE - self.dice_roll
+            ):
                 mask[token + 1] = 1
-        
+
         return mask
 
     def _check_game_over(self) -> bool:
-        return any(np.all(player_pieces == FINAL_SQUARE) for player_pieces in self.state)
-
-    def _was_dead_step(self, action: int) -> None:
-        # The agent's last action is set to None to prevent the action from being processed
-        self._last_obs = self.observe(self.agent_selection)
-        self.agent_selection = self._agent_selector.next()
-        self._accumulate_rewards()
+        return any(
+            np.all(player_pieces == FINAL_SQUARE) for player_pieces in self.state
+        )
 
     def close(self) -> None:
         pass
+
 
 if __name__ == "__main__":
     env = LudoEnv()
@@ -182,7 +203,7 @@ if __name__ == "__main__":
         action = env.action_spaces[env.agent_selection].sample()
         env.step(action)
         env.render()
-        
+
         if all(env.terminations.values()):
             break
 
