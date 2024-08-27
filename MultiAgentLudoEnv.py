@@ -31,15 +31,15 @@ class LudoEnv(AECEnv):
                     low=OUT_OF_BOUNDS,
                     high=FINAL_SQUARE,
                     shape=(NUM_PLAYERS, NUM_TOKENS),
-                    dtype=int,
+                    dtype=np.int8,
                 ),
                 "current_player": spaces.Discrete(NUM_PLAYERS),
-                "action_mask": spaces.Box(low=0, high=1, shape=(5,), dtype=int),
+                "action_mask": spaces.Box(low=0, high=1, shape=(5,), dtype=np.int8),
                 "last_roll": spaces.Discrete(7),
             }) for agent in self.possible_agents
         }
 
-        self.state: np.ndarray = np.full((NUM_PLAYERS, NUM_TOKENS), OUT_OF_BOUNDS, dtype=int)
+        self.state: np.ndarray = np.full((NUM_PLAYERS, NUM_TOKENS), OUT_OF_BOUNDS, dtype=np.int8)
         self.current_player: str = Player.RED.value
         self.dice_roll: int = 0
         self.agent_selection: str = self.current_player
@@ -53,7 +53,7 @@ class LudoEnv(AECEnv):
         ]
 
     def reset(self, seed: Optional[int] = None, options: Optional[Dict] = None) -> None:
-        self.state = np.full((NUM_PLAYERS, NUM_TOKENS), OUT_OF_BOUNDS, dtype=int)
+        self.state = np.full((NUM_PLAYERS, NUM_TOKENS), OUT_OF_BOUNDS, dtype=np.int8)
         self.agents = self.possible_agents[:]
         self.current_player = Player.RED.value
         self.dice_roll = 0
@@ -61,13 +61,17 @@ class LudoEnv(AECEnv):
         self.agent_selection = self.current_player
         self._agent_selector = agent_selector(self.agents)
         self.rewards = {agent: 0 for agent in self.agents}
-        self._dones = {agent: False for agent in self.agents}
+        self.terminations = {agent: False for agent in self.agents}
+        self.truncations = {agent: False for agent in self.agents}
         self.infos = {agent: {} for agent in self.agents}
 
     def step(self, action: int) -> None:
-        if self._dones[self.agent_selection]:
-            return self._was_done_step(action)
-
+        if (
+            self.terminations[self.agent_selection]
+            or self.truncations[self.agent_selection]
+        ):
+            return self._was_dead_step(action)
+        
         agent = self.agent_selection
         player_index = self.possible_agents.index(agent)
 
@@ -96,7 +100,7 @@ class LudoEnv(AECEnv):
         self._cumulative_rewards[agent] += reward
 
         if self._check_game_over():
-            self._dones = {agent: True for agent in self.agents}
+            self.terminations = {agent: True for agent in self.agents}
         else:
             self.agent_selection = self._agent_selector.next()
 
@@ -144,7 +148,7 @@ class LudoEnv(AECEnv):
         return None  # No capture occurred
 
     def _mask_actions(self, agent: str) -> np.ndarray:
-        mask = np.zeros(5, dtype=int)
+        mask = np.zeros(5, dtype=np.int8)
         player_index = self.possible_agents.index(agent)
         
         # if player has any out of bounds pieces and has rolled a 6 then action is allowed
@@ -161,6 +165,12 @@ class LudoEnv(AECEnv):
     def _check_game_over(self) -> bool:
         return any(np.all(player_pieces == FINAL_SQUARE) for player_pieces in self.state)
 
+    def _was_dead_step(self, action: int) -> None:
+        # The agent's last action is set to None to prevent the action from being processed
+        self._last_obs = self.observe(self.agent_selection)
+        self.agent_selection = self._agent_selector.next()
+        self._accumulate_rewards()
+
     def close(self) -> None:
         pass
 
@@ -173,7 +183,7 @@ if __name__ == "__main__":
         env.step(action)
         env.render()
         
-        if all(env._dones.values()):
+        if all(env.terminations.values()):
             break
 
     env.close()
