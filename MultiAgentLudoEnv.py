@@ -4,7 +4,8 @@ from typing import Dict, List, Tuple, Optional
 from pettingzoo import AECEnv
 from pettingzoo.utils import agent_selector
 from gymnasium import spaces
-
+from visualize import LudoVisualizer
+import cv2
 
 class Player(Enum):
     RED = "red"
@@ -17,11 +18,11 @@ NUM_PLAYERS = len(Player)
 NUM_TOKENS = 4
 OUT_OF_BOUNDS = -1
 START_SQUARE = 0
-FINAL_SQUARE = 58
+FINAL_SQUARE = 57
 ILLEGAL_ACTION_PENALTY = -5
 
 class LudoEnv(AECEnv):
-    metadata = {"render_modes": ["human"], "name": "ludo_v0"}
+    metadata = {"render_modes": ["human", "rgb_array"], "name": "ludo_v0"}
 
     def __init__(self):
         super().__init__()
@@ -53,6 +54,10 @@ class LudoEnv(AECEnv):
         self.current_player: str = Player.RED.value
         self.dice_roll: int = 0
         self.agent_selection: str = self.current_player
+        self.round_count: int = 0
+
+        self.visualizer = LudoVisualizer()
+
 
         self.start_positions: List[int] = [0, 13, 26, 39]
         self.home_stretches: List[List[int]] = [
@@ -67,6 +72,7 @@ class LudoEnv(AECEnv):
         self.agents = self.possible_agents[:]
         self.current_player = Player.RED.value
         self.dice_roll = 0
+        self.round_count = 0
         self._cumulative_rewards = {agent: 0 for agent in self.agents}
         self.agent_selection = self.current_player
         self._agent_selector = agent_selector(self.agents)
@@ -81,7 +87,7 @@ class LudoEnv(AECEnv):
             or self.truncations[self.agent_selection]
         ):
             return self._was_dead_step(action)
-
+        self.round_count += 1
         agent = self.agent_selection
         player_index = self.possible_agents.index(agent)
         # Check if the action is legal
@@ -132,24 +138,30 @@ class LudoEnv(AECEnv):
             "last_roll": self.dice_roll,
         }
 
-    def render(self) -> None:
+    def render(self) -> np.ndarray:
         print(f"Current state:")
         for i, player_pieces in enumerate(self.state):
             print(f"Player {self.possible_agents[i]}: {player_pieces}")
         print(f"Current player: {self.agent_selection}")
         print(f"Last dice roll: {self.dice_roll}")
+        return self.visualizer.render_game_state(
+            self.state, 
+            self.dice_roll, 
+            Player[self.current_player.upper()].value, 
+            self.round_count
+        )
 
     def _calculate_new_position(self, current_pos: int, steps: int) -> int:
-        if current_pos < 52:  # On the main track
+        if current_pos < FINAL_SQUARE - 5:
             new_pos = (current_pos + steps) % 52
             player_index = self.possible_agents.index(self.agent_selection)
             if new_pos in self.home_stretches[player_index]:
                 # Enter home stretch
                 return 52 + (new_pos - self.home_stretches[player_index][0])
             return new_pos
-        elif current_pos < 57:  # In the home stretch
+        elif current_pos < FINAL_SQUARE - 1 :  # In the home stretch
             new_pos = current_pos + steps
-            return min(new_pos, 58)  # Cap at 58 (finished)
+            return min(new_pos, FINAL_SQUARE - 1)
         return current_pos  # Already finished
 
     def _check_capture(self, position: int) -> Optional[Tuple[int, int]]:
@@ -192,19 +204,22 @@ class LudoEnv(AECEnv):
         )
 
     def close(self) -> None:
-        pass
+        cv2.destroyAllWindows()
+
 
 
 if __name__ == "__main__":
     env = LudoEnv()
     env.reset()
 
-    for _ in range(100):
+    for _ in range(100000):
         action = env.action_spaces[env.agent_selection].sample()
         env.step(action)
-        env.render()
-
-        if all(env.terminations.values()):
+        
+        board_image = env.render()
+        cv2.imshow("Ludo Game", cv2.cvtColor(board_image, cv2.COLOR_RGB2BGR))
+        # wait for key press to advance or q to quit
+        if cv2.waitKey(1) & 0xFF == ord('q'):
             break
 
     env.close()
