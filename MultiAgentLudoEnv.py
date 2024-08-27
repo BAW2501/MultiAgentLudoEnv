@@ -1,190 +1,179 @@
-import gymnasium as gym
-from gymnasium import spaces
+from enum import Enum
 import numpy as np
+from typing import Dict, List, Tuple, Optional
+from pettingzoo import AECEnv
+from pettingzoo.utils import agent_selector
+from gymnasium import spaces
 
-class MultiAgentLudoEnv(gym.Env):
+class Player(Enum):
+    RED = "red"
+    GREEN = "green"
+    BLUE = "blue"
+    YELLOW = "yellow"
+
+NUM_PLAYERS = len(Player)
+NUM_TOKENS = 4
+OUT_OF_BOUNDS = -1
+START_SQUARE = 0
+FINAL_SQUARE = 58
+
+class LudoEnv(AECEnv):
+    metadata = {"render_modes": ["human"], "name": "ludo_v0"}
+
     def __init__(self):
-        super(MultiAgentLudoEnv, self).__init__()
+        super().__init__()
+        self.possible_agents = [player.value for player in Player]
         
-        self.action_space = spaces.Discrete(5)
-        
-        self.observation_space = spaces.Dict({
-            'board_state': spaces.Box(low=-1, high=58, shape=(4, 4), dtype=int),
-            'current_player': spaces.Discrete(4),
-            'last_roll': spaces.Discrete(7)
-        })
-        
-        self.state = [[-1, -1, -1, -1] for _ in range(4)]
-        self.current_player = 0
-        self.dice_roll = 0
-        
-        self.start_positions = [0, 13, 26, 39]
-        self.home_stretches = [
+        self.action_spaces = {agent: spaces.Discrete(5) for agent in self.possible_agents}
+        self.observation_spaces = {
+            agent: spaces.Dict({
+                "board_state": spaces.Box(
+                    low=OUT_OF_BOUNDS,
+                    high=FINAL_SQUARE,
+                    shape=(NUM_PLAYERS, NUM_TOKENS),
+                    dtype=int,
+                ),
+                "current_player": spaces.Discrete(NUM_PLAYERS),
+                "action_mask": spaces.Box(low=0, high=1, shape=(5,), dtype=int),
+                "last_roll": spaces.Discrete(7),
+            }) for agent in self.possible_agents
+        }
+
+        self.state: np.ndarray = np.full((NUM_PLAYERS, NUM_TOKENS), OUT_OF_BOUNDS, dtype=int)
+        self.current_player: str = Player.RED.value
+        self.dice_roll: int = 0
+        self.agent_selection: str = self.current_player
+
+        self.start_positions: List[int] = [0, 13, 26, 39]
+        self.home_stretches: List[List[int]] = [
             list(range(51, 57)),
             list(range(12, 18)),
             list(range(25, 31)),
-            list(range(38, 44))
+            list(range(38, 44)),
         ]
-        
-    def reset(self, options = None,seed=None):
-        super().reset(seed=seed)
-        self.state = np.full((4, 4), -1, dtype=int)
-        self.current_player = 0
-        self.dice_roll = 0
-        return self._get_obs(), self._get_info()
-    def step(self, action_dict):
-        assert len(action_dict) == 4, "Must provide actions for all 4 players"
-        
-        rewards = {i: 0 for i in range(4)}
-        dones = {i: False for i in range(4)}
-        
-        self.dice_roll = np.random.randint(1, 7)
-        
-        action = action_dict[self.current_player]
-        
-        if action < 4:  # Move a piece
-            piece = action
-            current_pos = self.state[self.current_player][piece]
-            
-            if current_pos == -1 and self.dice_roll == 6:
-                # Move piece onto the board
-                self.state[self.current_player][piece] = self.start_positions[self.current_player]
-                rewards[self.current_player] = 1
-            elif current_pos >= 0:
-                # Move piece on the board
-                new_pos = self._calculate_new_position(current_pos, self.dice_roll)
-                if new_pos < 58:
-                    # Check for capture
-                    captured = self._check_capture(new_pos)
-                    if captured:
-                        rewards[self.current_player] += 2  # Reward for capturing
-                        rewards[captured[0]] -= 1  # Penalty for being captured
-                    
-                    self.state[self.current_player][piece] = new_pos
-                    rewards[self.current_player] += 0.1
-                    if new_pos == 57:  # Piece reached home
-                        rewards[self.current_player] += 5
 
-        # Check for winning condition
-        if np.all(self.state[self.current_player] == 58):
-            dones[self.current_player] = True
-            rewards[self.current_player] = 100
-            dones['__all__'] = True
-        
-        # Move to next player if didn't roll a 6
-        if self.dice_roll != 6:
-            self.current_player = (self.current_player + 1) % 4
-        
-        return self._get_obs(), rewards, dones, False, self._get_info()
-    
-    def _calculate_new_position(self, current_pos, steps):
+    def reset(self, seed: Optional[int] = None, options: Optional[Dict] = None) -> None:
+        self.state = np.full((NUM_PLAYERS, NUM_TOKENS), OUT_OF_BOUNDS, dtype=int)
+        self.agents = self.possible_agents[:]
+        self.current_player = Player.RED.value
+        self.dice_roll = 0
+        self._cumulative_rewards = {agent: 0 for agent in self.agents}
+        self.agent_selection = self.current_player
+        self._agent_selector = agent_selector(self.agents)
+        self.rewards = {agent: 0 for agent in self.agents}
+        self._dones = {agent: False for agent in self.agents}
+        self.infos = {agent: {} for agent in self.agents}
+
+    def step(self, action: int) -> None:
+        if self._dones[self.agent_selection]:
+            return self._was_done_step(action)
+
+        agent = self.agent_selection
+        player_index = self.possible_agents.index(agent)
+
+        self.dice_roll = np.random.randint(1, 7)
+        reward = 0
+
+        if action == 0 and self.dice_roll == 6:  # Enter a token
+            for token in range(NUM_TOKENS):
+                if self.state[player_index][token] == OUT_OF_BOUNDS:
+                    self.state[player_index][token] = self.start_positions[player_index]
+                    break
+        elif 1 <= action <= 4:  # Move a token
+            token = action - 1
+            if self.state[player_index][token] != OUT_OF_BOUNDS:
+                new_pos = self._calculate_new_position(self.state[player_index][token], self.dice_roll)
+                self.state[player_index][token] = new_pos
+                
+                captured = self._check_capture(new_pos)
+                if captured:
+                    reward += 1
+                
+                if new_pos == FINAL_SQUARE:
+                    reward += 2
+
+        self.rewards[agent] = reward
+        self._cumulative_rewards[agent] += reward
+
+        if self._check_game_over():
+            self._dones = {agent: True for agent in self.agents}
+        else:
+            self.agent_selection = self._agent_selector.next()
+
+    def observe(self, agent: str) -> Dict:
+        return {
+            "board_state": self.state,
+            "current_player": self.possible_agents.index(self.agent_selection),
+            "action_mask": self._mask_actions(agent),
+            "last_roll": self.dice_roll,
+        }
+
+    def render(self) -> None:
+        print(f"Current state:")
+        for i, player_pieces in enumerate(self.state):
+            print(f"Player {self.possible_agents[i]}: {player_pieces}")
+        print(f"Current player: {self.agent_selection}")
+        print(f"Last dice roll: {self.dice_roll}")
+
+    def _calculate_new_position(self, current_pos: int, steps: int) -> int:
         if current_pos < 52:  # On the main track
             new_pos = (current_pos + steps) % 52
-            if new_pos in self.home_stretches[self.current_player]:
+            player_index = self.possible_agents.index(self.agent_selection)
+            if new_pos in self.home_stretches[player_index]:
                 # Enter home stretch
-                return 52 + (new_pos - self.home_stretches[self.current_player][0])
+                return 52 + (new_pos - self.home_stretches[player_index][0])
             return new_pos
         elif current_pos < 57:  # In the home stretch
             new_pos = current_pos + steps
             return min(new_pos, 58)  # Cap at 58 (finished)
         return current_pos  # Already finished
-    
-    def _check_capture(self, position):
+
+    def _check_capture(self, position: int) -> Optional[Tuple[int, int]]:
         if position in self.start_positions:
             return None  # Starting positions are safe
-        
-        for player in range(4):
-            if player != self.current_player:
-                for piece in range(4):
+
+        current_player_index = self.possible_agents.index(self.agent_selection)
+        for player in range(NUM_PLAYERS):
+            if player != current_player_index:
+                for piece in range(NUM_TOKENS):
                     if self.state[player][piece] == position:
                         # Capture occurred
-                        self.state[player][piece] = -1  # Send piece back home
+                        self.state[player][piece] = OUT_OF_BOUNDS
                         return (player, piece)
-        
+
         return None  # No capture occurred
-    
-    def _get_obs(self):
-        return {
-            'board_state': self.state,
-            'current_player': self.current_player,
-            'last_roll': self.dice_roll
-        } 
-    
-    def _get_info(self):
-        return {i: {
-            'player_pieces': self.state[i][:],
-            'current_player': self.current_player,
-            'last_roll': self.dice_roll
-        } for i in range(4)}
-    
-    def render(self):
-        print(f"Current state:")
-        for i, player_pieces in enumerate(self.state):
-            print(f"Player {i}: {player_pieces}")
-        print(f"Current player: {self.current_player}")
-        print(f"Last dice roll: {self.dice_roll}")
 
-    def render_detailed(self):
-        # Create an empty board
-        board = [' ' for _ in range(52)]
-        home_areas = [['H' for _ in range(4)] for _ in range(4)]
-        home_stretches = [['.' for _ in range(6)] for _ in range(4)]
+    def _mask_actions(self, agent: str) -> np.ndarray:
+        mask = np.zeros(5, dtype=int)
+        player_index = self.possible_agents.index(agent)
+        
+        # if player has any out of bounds pieces and has rolled a 6 then action is allowed
+        if np.any(self.state[player_index] == OUT_OF_BOUNDS) and self.dice_roll == 6:
+            mask[0] = 1
+        
+        # if player has a piece inside the board and their dice roll doesn't overshoot final square then action is allowed
+        for token in range(NUM_TOKENS):
+            if START_SQUARE <= self.state[player_index][token] <= FINAL_SQUARE - self.dice_roll:
+                mask[token + 1] = 1
+        
+        return mask
 
-        # Fill the board with player pieces
-        for player, pieces in enumerate(self.state):
-            for i, pos in enumerate(pieces):
-                if pos == -1:
-                    home_areas[player][i] = str(i)
-                elif 0 <= pos < 52:
-                    board[pos] = f"{player}{i}"
-                elif 52 <= pos < 58:
-                    home_stretches[player][pos-52] = f"{player}{i}"
+    def _check_game_over(self) -> bool:
+        return any(np.all(player_pieces == FINAL_SQUARE) for player_pieces in self.state)
 
-        # Create the board representation
-        board_repr = [
-            "    12 11 10        09 08 07    ",
-            "    {} {} {}        {} {} {}    ",
-            "13 {}           06 {}",
-            "14 {}           05 {}",
-            "15 {}           04 {}",
-            "16 {}           03 {}",
-            "17 {}           02 {}",
-            "18 {}           01 {}",
-            "    {} {} {}        {} {} {}    ",
-            "    19 20 21        00 51 50    "
-        ]
+    def close(self) -> None:
+        pass
 
-        # Fill in the board representation
-        board_repr = [row.format(*[board[i] for i in range(52) if str(i) in row]) for row in board_repr]
+if __name__ == "__main__":
+    env = LudoEnv()
+    env.reset()
 
-        # Add home areas and home stretches
-        home_area_repr = [
-            "P0 Home: {}  P0 Stretch: {}",
-            "P1 Home: {}  P1 Stretch: {}",
-            "P2 Home: {}  P2 Stretch: {}",
-            "P3 Home: {}  P3 Stretch: {}"
-        ]
+    for _ in range(100):
+        action = env.action_spaces[env.agent_selection].sample()
+        env.step(action)
+        env.render()
+        
+        if all(env._dones.values()):
+            break
 
-        home_area_repr = [home_area_repr[i].format(' '.join(home_areas[i]), ' '.join(home_stretches[i])) for i in range(4)]
-
-        # Print the entire board
-        print("\n".join(board_repr))
-        print("\n".join(home_area_repr))
-        print(f"Current player: {self.current_player}")
-        print(f"Last dice roll: {self.dice_roll}")
-# Register the environment
-gym.register(
-    id='MultiAgentLudo-v0',
-    entry_point='MultiAgentLudoEnv:MultiAgentLudoEnv',
-)
-
-
-if __name__ == '__main__':
-    env = gym.make('MultiAgentLudo-v0')
-    obs, info = env.reset()
-    for _ in range(10):
-        action = env.action_space.sample()  # This would be your agent's choice
-        obs, reward, done, truncated, info = env.step(action)
-        env.render_detailed()
-        if done:
-            obs, info = env.reset()
+    env.close()
