@@ -13,12 +13,11 @@ class Player(Enum):
     BLUE = "blue"
     YELLOW = "yellow"
 
-
 NUM_PLAYERS = len(Player)
 NUM_TOKENS = 4
 OUT_OF_BOUNDS = -1
 START_SQUARE = 0
-FINAL_SQUARE = 57
+FINAL_SQUARE = 56
 ILLEGAL_ACTION_PENALTY = -5
 
 class LudoEnv(AECEnv):
@@ -58,7 +57,6 @@ class LudoEnv(AECEnv):
 
         self.visualizer = LudoVisualizer()
 
-
         self.start_positions: List[int] = [0, 13, 26, 39]
         self.home_stretches: List[List[int]] = [
             list(range(51, 57)),
@@ -66,6 +64,8 @@ class LudoEnv(AECEnv):
             list(range(25, 31)),
             list(range(38, 44)),
         ]
+
+        self.roll_again: bool = False
 
     def reset(self, seed: Optional[int] = None, options: Optional[Dict] = None) -> None:
         self.state = np.full((NUM_PLAYERS, NUM_TOKENS), OUT_OF_BOUNDS, dtype=np.int8)
@@ -80,6 +80,7 @@ class LudoEnv(AECEnv):
         self.terminations = {agent: False for agent in self.agents}
         self.truncations = {agent: False for agent in self.agents}
         self.infos = {agent: {} for agent in self.agents}
+        self.roll_again = False
 
     def step(self, action: int) -> None:
         if (
@@ -87,43 +88,52 @@ class LudoEnv(AECEnv):
             or self.truncations[self.agent_selection]
         ):
             return self._was_dead_step(action)
+
         self.round_count += 1
         agent = self.agent_selection
         player_index = self.possible_agents.index(agent)
+
+        # Roll the dice at the beginning of each turn
+        self.dice_roll = np.random.randint(1, 7)
+
         # Check if the action is legal
         if not self._is_action_legal(action):
             self.rewards[agent] = ILLEGAL_ACTION_PENALTY
             self._cumulative_rewards[agent] += ILLEGAL_ACTION_PENALTY
-        
-        self.dice_roll = np.random.randint(1, 7)
-        reward = 0
+            self.roll_again = False
+        else:
+            reward = 0
 
-        if action == 0 and self.dice_roll == 6:  # Enter a token
-            for token in range(NUM_TOKENS):
-                if self.state[player_index][token] == OUT_OF_BOUNDS:
-                    self.state[player_index][token] = self.start_positions[player_index]
-                    break
-        elif 1 <= action <= 4:  # Move a token
-            token = action - 1
-            if self.state[player_index][token] != OUT_OF_BOUNDS:
-                new_pos = self._calculate_new_position(
-                    self.state[player_index][token], self.dice_roll
-                )
-                self.state[player_index][token] = new_pos
+            if action == 0 and self.dice_roll == 6:  # Enter a token
+                for token in range(NUM_TOKENS):
+                    if self.state[player_index][token] == OUT_OF_BOUNDS:
+                        self.state[player_index][token] = self.start_positions[player_index]
+                        break
+            elif 1 <= action <= 4:  # Move a token
+                token = action - 1
+                if self.state[player_index][token] != OUT_OF_BOUNDS:
+                    new_pos = self._calculate_new_position(
+                        self.state[player_index][token], self.dice_roll
+                    )
+                    self.state[player_index][token] = new_pos
 
-                captured = self._check_capture(new_pos)
-                if captured:
-                    reward += 1
+                    captured = self._check_capture(new_pos)
+                    if captured:
+                        reward += 1
 
-                if new_pos == FINAL_SQUARE:
-                    reward += 2
+                    if new_pos == FINAL_SQUARE:
+                        reward += 2
 
-        self.rewards[agent] = reward
-        self._cumulative_rewards[agent] += reward
+            self.rewards[agent] = reward
+            self._cumulative_rewards[agent] += reward
+
+            # Set roll_again flag if dice_roll is 6
+            self.roll_again = (self.dice_roll == 6)
 
         if self._check_game_over():
             self.terminations = {agent: True for agent in self.agents}
-        else:
+        elif not self.roll_again:
+            # Only change the agent if we're not rolling again
             self.agent_selection = self._agent_selector.next()
 
     def _is_action_legal(self, action: int) -> bool:
@@ -144,6 +154,7 @@ class LudoEnv(AECEnv):
             print(f"Player {self.possible_agents[i]}: {player_pieces}")
         print(f"Current player: {self.agent_selection}")
         print(f"Last dice roll: {self.dice_roll}")
+        print(f"Roll again: {self.roll_again}")
         return self.visualizer.render_game_state(
             self.state, 
             self.dice_roll, 
@@ -205,8 +216,6 @@ class LudoEnv(AECEnv):
 
     def close(self) -> None:
         cv2.destroyAllWindows()
-
-
 
 if __name__ == "__main__":
     env = LudoEnv()
