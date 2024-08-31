@@ -422,9 +422,6 @@ def make_img_of_board(pieces, dice, players_dice, round_number):
 
 
 class LudoVisualizer:
-    def __init__(self):
-        folder = os.path.dirname(os.path.abspath(__file__))
-
     def draw_basic_board(self):
         board = np.full(
             shape=(*BOARS_SIZE, 3), fill_value=BOARD_BACKGROUND_COLOR, dtype=np.uint8
