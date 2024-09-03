@@ -156,7 +156,7 @@ class LudoEnv(AECEnv):
         print(f"Last dice roll: {self.dice_roll}")
         print(f"Roll again: {self.roll_again}")
         return self.visualizer.render_game_state(
-            self.state, 
+            self.state + 1, 
             self.dice_roll, 
             Player[self.current_player.upper()].value, 
             self.round_count
