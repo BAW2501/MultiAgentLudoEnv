@@ -4,8 +4,6 @@ from typing import Dict, List, Tuple, Optional
 from pettingzoo import AECEnv
 from pettingzoo.utils import agent_selector
 from gymnasium import spaces
-from visualize import LudoVisualizer
-import cv2
 
 class Player(Enum):
     RED = "red"
@@ -55,7 +53,6 @@ class LudoEnv(AECEnv):
         self.agent_selection: str = self.current_player
         self.round_count: int = 0
 
-        self.visualizer = LudoVisualizer()
 
         self.start_positions: List[int] = [0, 13, 26, 39]
         self.home_stretches: List[List[int]] = [
@@ -148,19 +145,13 @@ class LudoEnv(AECEnv):
             "last_roll": self.dice_roll,
         }
 
-    def render(self) -> np.ndarray:
+    def render(self) -> None:
         print(f"Current state:")
         for i, player_pieces in enumerate(self.state):
             print(f"Player {self.possible_agents[i]}: {player_pieces}")
         print(f"Current player: {self.agent_selection}")
         print(f"Last dice roll: {self.dice_roll}")
         print(f"Roll again: {self.roll_again}")
-        return self.visualizer.render_game_state(
-            self.state + 1, 
-            self.dice_roll, 
-            Player[self.current_player.upper()].value, 
-            self.round_count
-        )
 
     def _calculate_new_position(self, current_pos: int, steps: int) -> int:
         if current_pos < FINAL_SQUARE - 5:
@@ -214,8 +205,6 @@ class LudoEnv(AECEnv):
             np.all(player_pieces == FINAL_SQUARE) for player_pieces in self.state
         )
 
-    def close(self) -> None:
-        cv2.destroyAllWindows()
 
 if __name__ == "__main__":
     env = LudoEnv()
@@ -224,11 +213,5 @@ if __name__ == "__main__":
     for _ in range(100000):
         action = env.action_spaces[env.agent_selection].sample()
         env.step(action)
-        
         board_image = env.render()
-        cv2.imshow("Ludo Game", cv2.cvtColor(board_image, cv2.COLOR_RGB2BGR))
-        # wait for key press to advance or q to quit
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
-
     env.close()
