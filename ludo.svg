@@ -50,17 +50,17 @@
             <circle cx="115" cy="35" r="4" />
             <circle cx="125" cy="35" r="4" />
         </g>
-        <g fill="yellow">
-            <circle cx="25" cy="115" r="4" />
-            <circle cx="35" cy="115" r="4" />
-            <circle cx="25" cy="125" r="4" />
-            <circle cx="35" cy="125" r="4" />
-        </g>
         <g fill="blue">
             <circle cx="115" cy="115" r="4" />
             <circle cx="125" cy="115" r="4" />
             <circle cx="115" cy="125" r="4" />
             <circle cx="125" cy="125" r="4" />
+        </g>
+        <g fill="yellow">
+            <circle cx="25" cy="115" r="4" />
+            <circle cx="35" cy="115" r="4" />
+            <circle cx="25" cy="125" r="4" />
+            <circle cx="35" cy="125" r="4" />
         </g>
     </g>
 </svg>
