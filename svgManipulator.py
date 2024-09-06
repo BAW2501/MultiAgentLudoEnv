@@ -10,11 +10,11 @@ class LudoVisualizer:
     OFFSET = 7 + 7j  # svg is not centered on 0,0
 
     def __init__(self, filename="ludo.svg"):
-        self._initialize_svg_root(filename)
-        self._initialize_out_of_bounds()
-        self._initialize_end_positions()
-        self.players = list(self.root[12][4:])  # Initialize player positions from SVG
         self.steps = [1] * 6 + [2, 3, 4, 5, 6, 7, 7, 7, 6, 5, 4, 3, 2] + [1] * 6 + [0]
+        self._initialize_svg_root(filename)  # load the svg to manipulate
+        self._initialize_out_of_bounds()  # where to place pieces when out of the game
+        self._initialize_end_positions()  # colored squares except starting one
+        self.players = list(self.root[12][4:])  # Initialize player positions from SVG
 
     def _initialize_svg_root(self, svg_filename: str) -> None:
         with open(svg_filename, "r") as svg_file:
@@ -23,7 +23,7 @@ class LudoVisualizer:
         self.root = ET.fromstring(self.svg_string)
 
     def _initialize_out_of_bounds(self) -> None:
-        offsets = [0 + 0j, 1 + 0j, 1 + 1j, 0 + 1j]
+        offsets = [0 + 0j, 1 + 0j, 1 + 1j, 0 + 1j]  # square, Right, Bottom, R & B
         self.outofbounds = [
             [2 + 2j + offset + 9 * player_offset for offset in offsets]
             for player_offset in offsets
@@ -80,7 +80,9 @@ class LudoVisualizer:
             imag_sign * self.steps[imag_index % 26],
         )
 
-    def _calculate_coordinate_signs(self, real_index: int, imag_index: int) -> tuple[int, int]:
+    def _calculate_coordinate_signs(
+        self, real_index: int, imag_index: int
+    ) -> tuple[int, int]:
         imag_sign = 1 if imag_index >= 26 else -1
         real_sign = 1 if real_index // 26 % 2 == 0 else -1
         return real_sign, imag_sign
@@ -90,6 +92,16 @@ class LudoVisualizer:
 
     def calculate_position(self, player_index: int, piece_index: int) -> complex:
         return self.coordinate_on_board(piece_index + 13 * player_index)
+
+    def set_board_from_array(self, board: list[list[int]]) -> None:
+        if len(board) != self.NUM_PLAYERS or any(
+            len(player) != self.NUM_PLAYERS for player in board
+        ):
+            raise ValueError("Input must be a 4x4 array of arrays")
+
+        for player_index, player_pieces in enumerate(board):
+            for piece_num, piece_index in enumerate(player_pieces):
+                self.move_piece(player_index, piece_num, piece_index)
 
     def get_svg_string(self) -> str:
         # Convert SVG tree to string representation
