@@ -5,29 +5,32 @@ from pettingzoo import AECEnv
 from pettingzoo.utils import agent_selector
 from gymnasium import spaces
 
+
 class Player(Enum):
     RED = "red"
     GREEN = "green"
     BLUE = "blue"
     YELLOW = "yellow"
 
+
 NUM_PLAYERS = len(Player)
 NUM_TOKENS = 4
 OUT_OF_BOUNDS = -1
 START_SQUARE = 0
 FINAL_SQUARE = 58
-ILLEGAL_ACTION_PENALTY = -5
+ILLEGAL_ACTION_PENALTY = -50
+
 
 class LudoEnv(AECEnv):
-    metadata = {"render_modes": ["human", "rgb_array"], "name": "ludo_v0"}
+    metadata = {"render_modes": ["rgb_array"], "name": "ludo_v0"}
 
     def __init__(self):
         super().__init__()
         self.possible_agents = [player.value for player in Player]
 
         self.action_spaces = {
-            agent: spaces.Discrete(5) for agent in self.possible_agents
-        }
+            agent: spaces.Discrete(4) for agent in self.possible_agents
+        }  # plays one of the 4 tokens (0,1,2,3) with the dice roll (OOB token + 6 enters it )
         self.observation_spaces = {
             agent: spaces.Dict(
                 {
@@ -52,7 +55,6 @@ class LudoEnv(AECEnv):
         self.dice_roll: int = 0
         self.agent_selection: str = self.current_player
         self.round_count: int = 0
-
 
         self.start_positions: List[int] = [0, 13, 26, 39]
         self.home_stretches: List[List[int]] = [
@@ -104,7 +106,9 @@ class LudoEnv(AECEnv):
             if action == 0 and self.dice_roll == 6:  # Enter a token
                 for token in range(NUM_TOKENS):
                     if self.state[player_index][token] == OUT_OF_BOUNDS:
-                        self.state[player_index][token] = self.start_positions[player_index]
+                        self.state[player_index][token] = self.start_positions[
+                            player_index
+                        ]
                         break
             elif 1 <= action <= 4:  # Move a token
                 token = action - 1
@@ -114,18 +118,19 @@ class LudoEnv(AECEnv):
                     )
                     self.state[player_index][token] = new_pos
 
-                    captured = self._check_capture(new_pos)
+                    captured = self._check_capture(player_index, new_pos)
                     if captured:
-                        reward += 1
+                        reward += 10
 
                     if new_pos == FINAL_SQUARE:
-                        reward += 2
+                        reward += 100
 
             self.rewards[agent] = reward
             self._cumulative_rewards[agent] += reward
 
             # Set roll_again flag if dice_roll is 6
-            self.roll_again = (self.dice_roll == 6)
+            self.roll_again = self.dice_roll == 6
+        self.terminations[player_index] = self.get_playerDone(player_index) 
 
         if self._check_game_over():
             self.terminations = {agent: True for agent in self.agents}
@@ -146,48 +151,47 @@ class LudoEnv(AECEnv):
         }
 
     def render(self) -> None:
-        print(f"Current state:")
-        for i, player_pieces in enumerate(self.state):
-            print(f"Player {self.possible_agents[i]}: {player_pieces}")
-        print(f"Current player: {self.agent_selection}")
-        print(f"Last dice roll: {self.dice_roll}")
-        print(f"Roll again: {self.roll_again}")
+        print(
+            str(self.state).replace("\n", " "),
+            self.round_count,
+            # f"Current player: {self.agent_selection}",
+            # f"Last dice roll: {self.dice_roll}",
+            end="\r",
+        )
 
     def _calculate_new_position(self, current_pos: int, steps: int) -> int:
-        if current_pos < FINAL_SQUARE - 5:
-            new_pos = (current_pos + steps) % 52
-            player_index = self.possible_agents.index(self.agent_selection)
-            if new_pos in self.home_stretches[player_index]:
-                # Enter home stretch
-                return 52 + (new_pos - self.home_stretches[player_index][0])
-            return new_pos
-        elif current_pos < FINAL_SQUARE - 1 :  # In the home stretch
-            new_pos = current_pos + steps
-            return min(new_pos, FINAL_SQUARE - 1)
-        return current_pos  # Already finished
+        if current_pos == OUT_OF_BOUNDS and steps == 6:
+            return START_SQUARE
+        elif current_pos in range(52):
+            return current_pos + steps
+        elif current_pos + steps <= FINAL_SQUARE:
+            return current_pos + steps
+        return current_pos
 
-    def _check_capture(self, position: int) -> Optional[Tuple[int, int]]:
-        if position in self.start_positions:
-            return None  # Starting positions are safe
+    def _check_capture(
+        self, current_player_index: int, position: int
+    ) -> bool:
+        if position == START_SQUARE or position >= 52:
+            return False  # Starting positions are safe
 
-        current_player_index = self.possible_agents.index(self.agent_selection)
         for player in range(NUM_PLAYERS):
             if player != current_player_index:
                 for piece in range(NUM_TOKENS):
-                    if self.state[player][piece] == position:
+                    # each player starts 13 spaces away from each other
+                    if self.state[player][piece] == position + (player - current_player_index) * 13:
                         # Capture occurred
                         self.state[player][piece] = OUT_OF_BOUNDS
-                        return (player, piece)
+                        return True
 
-        return None  # No capture occurred
+        return False  # No capture occurred
 
     def _mask_actions(self, agent: str) -> np.ndarray:
-        mask = np.zeros(5, dtype=np.int8)
+        mask = np.zeros(4, dtype=np.int8)
         player_index = self.possible_agents.index(agent)
 
         # if player has any out of bounds pieces and has rolled a 6 then action is allowed
-        if np.any(self.state[player_index] == OUT_OF_BOUNDS) and self.dice_roll == 6:
-            mask[0] = 1
+        if self.dice_roll == 6:
+            mask = self.state[player_index] == OUT_OF_BOUNDS
 
         # if player has a piece inside the board and their dice roll doesn't overshoot final square then action is allowed
         for token in range(NUM_TOKENS):
@@ -196,7 +200,9 @@ class LudoEnv(AECEnv):
                 <= self.state[player_index][token]
                 <= FINAL_SQUARE - self.dice_roll
             ):
-                mask[token + 1] = 1
+                mask[token] = 1 # moving pieces that aren't out of bounds
+            if self.state[player_index][token] == FINAL_SQUARE:
+                mask[token] = 0
 
         return mask
 
@@ -204,14 +210,24 @@ class LudoEnv(AECEnv):
         return any(
             np.all(player_pieces == FINAL_SQUARE) for player_pieces in self.state
         )
+    def get_playerDone(self,player_index):
+        return bool(np.all(self.state[player_index] == FINAL_SQUARE))
+        
+    def action_space(self, agent):
+        return self.action_spaces[agent]
 
 
 if __name__ == "__main__":
     env = LudoEnv()
-    env.reset()
+    env.reset(seed=42)
 
-    for _ in range(100000):
-        action = env.action_spaces[env.agent_selection].sample()
+    for agent in env.agent_iter():
+        observation, reward, termination, truncation, info = env.last()
+        
+        if termination or truncation:
+            break
+        # this is where you would insert your policy
+        action = env.action_space(agent).sample()  
         env.step(action)
-        board_image = env.render()
+        env.render()
     env.close()
