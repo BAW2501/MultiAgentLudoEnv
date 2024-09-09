@@ -1,6 +1,8 @@
-# Ludo Gymnasium Environment [Work In Progress][Not Working Yet]
+# Ludo Gymnasium Environment [Work In Progress][Mostly Working]
 
 This project implements a Ludo board game environment using the Gymnasium framework. It provides a multi-agent reinforcement learning environment for the classic board game Ludo.
+
+![Ludo](ludo.svg)
 
 ## Features
 
@@ -39,14 +41,19 @@ gym.register(
 )
 
 env = gym.make('MultiAgentLudo-v0')
-obs, info = env.reset()
+env.reset()
 
-for _ in range(1000):
-    actions = {i: env.action_space.sample() for i in range(4)}  # Random actions
-    obs, rewards, dones, truncated, info = env.step(actions)
-    env.render_detailed()  # Display the current game state
-    if dones['__all__']:
-        obs, info = env.reset()
+for agent in env.agent_iter():
+    observation, reward, termination, truncation, info = env.last()
+
+    if termination or truncation:
+        print(f"Agent {agent} has reached the final square.")
+        break
+    # this is where you would insert your policy
+    action = env.action_space(agent).sample()
+    env.step(action)
+    env.render()
+env.close()
 ```
 
 ## Customization
