@@ -1,32 +1,26 @@
-from enum import Enum
 import numpy as np
-from typing import Dict, List, Tuple, Optional
+from typing import Optional
 from pettingzoo import AECEnv
-from pettingzoo.utils import agent_selector
 from gymnasium import spaces
 
 
-class Player(Enum):
-    RED = "red"
-    GREEN = "green"
-    BLUE = "blue"
-    YELLOW = "yellow"
-
-
-NUM_PLAYERS = len(Player)
+NUM_PLAYERS = 4
 NUM_TOKENS = 4
 OUT_OF_BOUNDS = -1
 START_SQUARE = 0
 FINAL_SQUARE = 58
-ILLEGAL_ACTION_PENALTY = -50
 
 
 class LudoEnv(AECEnv):
     metadata = {"render_modes": ["rgb_array"], "name": "ludo_v0"}
+    CAPTURE_REWARD = 10
+    MOVING_FORCE_REWARD = 1
+    WIN_REWARD = 100  # SHOULD SCALE WITH THE WIN ORDER LAST ONE GETS ZERO
+    ENTERING_PIECE_REWARD = 10
 
     def __init__(self):
         super().__init__()
-        self.possible_agents = [player.value for player in Player]
+        self.possible_agents = list(range(NUM_PLAYERS))
 
         self.action_spaces = {
             agent: spaces.Discrete(4) for agent in self.possible_agents
@@ -41,7 +35,6 @@ class LudoEnv(AECEnv):
                         dtype=np.int8,
                     ),
                     "current_player": spaces.Discrete(NUM_PLAYERS),
-                    "action_mask": spaces.Box(low=0, high=1, shape=(5,), dtype=np.int8),
                     "last_roll": spaces.Discrete(7),
                 }
             )
@@ -51,35 +44,31 @@ class LudoEnv(AECEnv):
         self.state: np.ndarray = np.full(
             (NUM_PLAYERS, NUM_TOKENS), OUT_OF_BOUNDS, dtype=np.int8
         )
-        self.current_player: str = Player.RED.value
         self.dice_roll: int = 0
-        self.agent_selection: str = self.current_player
         self.round_count: int = 0
-
-        self.start_positions: List[int] = [0, 13, 26, 39]
-        self.home_stretches: List[List[int]] = [
-            list(range(51, 57)),
-            list(range(12, 18)),
-            list(range(25, 31)),
-            list(range(38, 44)),
-        ]
-
         self.roll_again: bool = False
+        self.agent_selection: int = 0
+        # member variables
+        self.agents = self.possible_agents
+        self.rewards = {i: 0 for i in self.possible_agents}
+        self._cumulative_rewards = {i: 0 for i in self.possible_agents}
+        self.dones = {i: False for i in self.possible_agents}
+        self.infos = {i: {} for i in self.possible_agents}
 
-    def reset(self, seed: Optional[int] = None, options: Optional[Dict] = None) -> None:
-        self.state = np.full((NUM_PLAYERS, NUM_TOKENS), OUT_OF_BOUNDS, dtype=np.int8)
-        self.agents = self.possible_agents[:]
-        self.current_player = Player.RED.value
-        self.dice_roll = 0
-        self.round_count = 0
-        self._cumulative_rewards = {agent: 0 for agent in self.agents}
-        self.agent_selection = self.current_player
-        self._agent_selector = agent_selector(self.agents)
-        self.rewards = {agent: 0 for agent in self.agents}
-        self.terminations = {agent: False for agent in self.agents}
-        self.truncations = {agent: False for agent in self.agents}
-        self.infos = {agent: {} for agent in self.agents}
-        self.roll_again = False
+    def reset(self, seed: Optional[int] = None, options: Optional[dict] = None) -> None:
+        self.state: np.ndarray = np.full(
+            (NUM_PLAYERS, NUM_TOKENS), OUT_OF_BOUNDS, dtype=np.int8
+        )
+        self.dice_roll: int = 0
+        self.round_count: int = 0
+        self.roll_again: bool = False
+        self.agent_selection: int = 0
+        # member variables
+        self.agents = self.possible_agents
+        self.rewards = {i: 0 for i in self.possible_agents}
+        self._cumulative_rewards = {i: 0 for i in self.possible_agents}
+        self.dones = {i: False for i in self.possible_agents}
+        self.infos = {i: {} for i in self.possible_agents}
 
     def step(self, action: int) -> None:
         if (
@@ -89,64 +78,46 @@ class LudoEnv(AECEnv):
             return self._was_dead_step(action)
 
         self.round_count += 1
-        agent = self.agent_selection
-        player_index = self.possible_agents.index(agent)
+        player_index = self.agent_selection
 
         # Roll the dice at the beginning of each turn
         self.dice_roll = np.random.randint(1, 7)
 
-        # Check if the action is legal
-        if not self._is_action_legal(action):
-            self.rewards[agent] = ILLEGAL_ACTION_PENALTY
-            self._cumulative_rewards[agent] += ILLEGAL_ACTION_PENALTY
-            self.roll_again = False
-        else:
-            reward = 0
+        new_pos = self._calculate_new_position(
+            self.state[player_index][action], self.dice_roll
+        )
+        # check if piece is captured
+        captured = self._check_capture(player_index, new_pos)
+        # reward for how much the piece moves
+        # should reward entering a piece more than moving
+        distance = new_pos - self.state[player_index][action]
+        # check if piece is in final square
+        in_final = self.state[player_index][action] == FINAL_SQUARE
 
-            if action == 0 and self.dice_roll == 6:  # Enter a token
-                for token in range(NUM_TOKENS):
-                    if self.state[player_index][token] == OUT_OF_BOUNDS:
-                        self.state[player_index][token] = self.start_positions[
-                            player_index
-                        ]
-                        break
-            elif 1 <= action <= 4:  # Move a token
-                token = action - 1
-                if self.state[player_index][token] != OUT_OF_BOUNDS:
-                    new_pos = self._calculate_new_position(
-                        self.state[player_index][token], self.dice_roll
-                    )
-                    self.state[player_index][token] = new_pos
+        self.state[player_index][action] = new_pos
 
-                    captured = self._check_capture(player_index, new_pos)
-                    if captured:
-                        reward += 10
+        reward = sum(
+            [
+                captured * self.CAPTURE_REWARD,
+                distance * self.MOVING_FORCE_REWARD,
+                in_final * self.ENTERING_PIECE_REWARD,
+            ]
+        )
 
-                    if new_pos == FINAL_SQUARE:
-                        reward += 100
+        self.rewards[agent] = reward
+        self._cumulative_rewards[agent] += reward
 
-            self.rewards[agent] = reward
-            self._cumulative_rewards[agent] += reward
+        # Set roll_again flag if dice_roll is 6
+        self.roll_again = self.dice_roll == 6 and not self.terminations[player_index]
 
-            # Set roll_again flag if dice_roll is 6
-            self.roll_again = self.dice_roll == 6
-        self.terminations[player_index] = self.get_playerDone(player_index) 
-
-        if self._check_game_over():
-            self.terminations = {agent: True for agent in self.agents}
-        elif not self.roll_again:
+        if not self.roll_again:
             # Only change the agent if we're not rolling again
-            self.agent_selection = self._agent_selector.next()
+            self.agent_selection = (self.agent_selection + 1) % NUM_PLAYERS
 
-    def _is_action_legal(self, action: int) -> bool:
-        mask = self._mask_actions(self.agent_selection)
-        return mask[action] == 1
-
-    def observe(self, agent: str) -> Dict:
+    def observe(self, agent: int) -> dict:
         return {
             "board_state": self.state,
             "current_player": self.possible_agents.index(self.agent_selection),
-            "action_mask": self._mask_actions(agent),
             "last_roll": self.dice_roll,
         }
 
@@ -154,67 +125,51 @@ class LudoEnv(AECEnv):
         print(
             str(self.state).replace("\n", " "),
             self.round_count,
-            # f"Current player: {self.agent_selection}",
-            # f"Last dice roll: {self.dice_roll}",
-            end="\r",
+            f"Current player: {self.agent_selection}",
+            f"Last dice roll: {self.dice_roll}",
+            # end="\r",
         )
 
     def _calculate_new_position(self, current_pos: int, steps: int) -> int:
         if current_pos == OUT_OF_BOUNDS and steps == 6:
             return START_SQUARE
-        elif current_pos in range(52):
-            return current_pos + steps
         elif current_pos + steps <= FINAL_SQUARE:
             return current_pos + steps
         return current_pos
 
-    def _check_capture(
-        self, current_player_index: int, position: int
-    ) -> bool:
+    def _check_capture(self, current_player_index: int, position: int) -> bool:
         if position == START_SQUARE or position >= 52:
             return False  # Starting positions are safe
 
-        for player in range(NUM_PLAYERS):
-            if player != current_player_index:
+        for other_player_index in range(NUM_PLAYERS):
+            capture_position = (
+                position + (other_player_index - current_player_index) * 13
+            )
+            if (
+                other_player_index != current_player_index
+                and capture_position in range(1, 52)
+            ):
                 for piece in range(NUM_TOKENS):
-                    # each player starts 13 spaces away from each other
-                    if self.state[player][piece] == position + (player - current_player_index) * 13:
+                    if self.state[other_player_index][piece] == capture_position:
                         # Capture occurred
-                        self.state[player][piece] = OUT_OF_BOUNDS
+                        self.state[other_player_index][piece] = OUT_OF_BOUNDS
                         return True
 
         return False  # No capture occurred
 
-    def _mask_actions(self, agent: str) -> np.ndarray:
-        mask = np.zeros(4, dtype=np.int8)
-        player_index = self.possible_agents.index(agent)
-
-        # if player has any out of bounds pieces and has rolled a 6 then action is allowed
-        if self.dice_roll == 6:
-            mask = self.state[player_index] == OUT_OF_BOUNDS
-
-        # if player has a piece inside the board and their dice roll doesn't overshoot final square then action is allowed
-        for token in range(NUM_TOKENS):
-            if (
-                START_SQUARE
-                <= self.state[player_index][token]
-                <= FINAL_SQUARE - self.dice_roll
-            ):
-                mask[token] = 1 # moving pieces that aren't out of bounds
-            if self.state[player_index][token] == FINAL_SQUARE:
-                mask[token] = 0
-
-        return mask
-
-    def _check_game_over(self) -> bool:
-        return any(
-            np.all(player_pieces == FINAL_SQUARE) for player_pieces in self.state
-        )
-    def get_playerDone(self,player_index):
+    def get_playerDone(self, player_index):
         return bool(np.all(self.state[player_index] == FINAL_SQUARE))
-        
+
     def action_space(self, agent):
         return self.action_spaces[agent]
+
+    @property
+    def terminations(self) -> dict[int, bool]:
+        return {player: self.get_playerDone(player) for player in range(NUM_PLAYERS)}
+
+    @property
+    def truncations(self) -> dict[int, bool]:
+        return {player: False for player in range(NUM_PLAYERS)}
 
 
 if __name__ == "__main__":
@@ -223,11 +178,12 @@ if __name__ == "__main__":
 
     for agent in env.agent_iter():
         observation, reward, termination, truncation, info = env.last()
-        
+
         if termination or truncation:
+            print(f"Agent {agent} has reached the final square.")
             break
         # this is where you would insert your policy
-        action = env.action_space(agent).sample()  
+        action = env.action_space(agent).sample()
         env.step(action)
         env.render()
     env.close()
