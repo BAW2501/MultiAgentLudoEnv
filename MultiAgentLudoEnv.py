@@ -3,52 +3,79 @@ from typing import Optional
 from pettingzoo import AECEnv
 from gymnasium import spaces
 
-
-NUM_PLAYERS = 4
-NUM_TOKENS = 4
-OUT_OF_BOUNDS = -1
-START_SQUARE = 0
-FINAL_SQUARE = 58
+"""
+Ludo Game Rules:
+1. Each player has 4 tokens that start out of bounds.
+2. Players roll a die to move their tokens clockwise around the board.
+3. A 6 is required to move a token from out of bounds to the start square.
+4. If a token lands on an opponent's token, the opponent's token is sent back out of bounds.
+5. Tokens must reach the final square (58) exactly; overshooting aren't allowed.
+6. The first player to get all 4 tokens to the final square wins.
+"""
 
 
 class LudoEnv(AECEnv):
-    metadata = {"render_modes": ["rgb_array"], "name": "ludo_v0"}
+    """
+    A Ludo game environment implemented as an AEC (Agent Environment Cycle) environment.
+    This class represents the game state, handles player actions, and manages the game flow.
+    """
+
+    # Constants
+    NUM_PLAYERS = 4
+    NUM_TOKENS = 4
+    OUT_OF_BOUNDS = -1
+    START_SQUARE = 0
+    FINAL_SQUARE = 58
+    DICE_MIN = 1
+    DICE_MAX = 6
     CAPTURE_REWARD = 10
     MOVING_FORCE_REWARD = 1
-    WIN_REWARD = 100  # SHOULD SCALE WITH THE WIN ORDER LAST ONE GETS ZERO
+    WIN_REWARD = 100
     ENTERING_PIECE_REWARD = 10
+    SAFE_POSITION = 52
+
+    metadata = {"render_modes": ["rgb_array"], "name": "ludo_v0"}
 
     def __init__(self):
         super().__init__()
-        self.possible_agents = list(range(NUM_PLAYERS))
+        self.possible_agents: list[int] = list(range(self.NUM_PLAYERS))
+        self.action_spaces = self._create_action_spaces()
+        self.observation_spaces = self._create_observation_spaces()
+        self._initialize_game_state()
 
-        self.action_spaces = {
-            agent: spaces.Discrete(4) for agent in self.possible_agents
-        }  # plays one of the 4 tokens (0,1,2,3) with the dice roll (OOB token + 6 enters it )
-        self.observation_spaces = {
+    def _create_action_spaces(self) -> dict[int, spaces.Space]:
+        """Create action spaces for all players."""
+        return {
+            agent: spaces.Discrete(self.NUM_TOKENS) for agent in self.possible_agents
+        }
+
+    def _create_observation_spaces(self) -> dict[int, spaces.Space]:
+        """Create observation spaces for all players."""
+        return {
             agent: spaces.Dict(
                 {
                     "board_state": spaces.Box(
-                        low=OUT_OF_BOUNDS,
-                        high=FINAL_SQUARE,
-                        shape=(NUM_PLAYERS, NUM_TOKENS),
+                        low=self.OUT_OF_BOUNDS,
+                        high=self.FINAL_SQUARE,
+                        shape=(self.NUM_PLAYERS, self.NUM_TOKENS),
                         dtype=np.int8,
                     ),
-                    "current_player": spaces.Discrete(NUM_PLAYERS),
-                    "last_roll": spaces.Discrete(7),
+                    "current_player": spaces.Discrete(self.NUM_PLAYERS),
+                    "last_roll": spaces.Discrete(self.DICE_MAX + 1),
                 }
             )
             for agent in self.possible_agents
         }
 
-        self.state: np.ndarray = np.full(
-            (NUM_PLAYERS, NUM_TOKENS), OUT_OF_BOUNDS, dtype=np.int8
+    def _initialize_game_state(self):
+        """Initialize or reset the game state and member variables."""
+        self.board_state: np.ndarray = np.full(
+            (self.NUM_PLAYERS, self.NUM_TOKENS), self.OUT_OF_BOUNDS, dtype=np.int8
         )
         self.dice_roll: int = 0
         self.round_count: int = 0
         self.roll_again: bool = False
         self.agent_selection: int = 0
-        # member variables
         self.agents = self.possible_agents
         self.rewards = {i: 0 for i in self.possible_agents}
         self._cumulative_rewards = {i: 0 for i in self.possible_agents}
@@ -56,19 +83,34 @@ class LudoEnv(AECEnv):
         self.infos = {i: {} for i in self.possible_agents}
 
     def reset(self, seed: Optional[int] = None, options: Optional[dict] = None) -> None:
-        self.state: np.ndarray = np.full(
-            (NUM_PLAYERS, NUM_TOKENS), OUT_OF_BOUNDS, dtype=np.int8
+        self._initialize_game_state()
+
+    def _roll_dice(self) -> int:
+        """Roll the dice and return the result."""
+        return np.random.randint(self.DICE_MIN, self.DICE_MAX + 1)
+
+    def _calculate_reward(
+        self, player_index: int, action: int, new_pos: int, captured: bool
+    ) -> int:
+        """Calculate the reward for a player's action."""
+        return (
+            self._get_move_reward(player_index, action, new_pos)
+            + self._get_capture_reward(captured)
+            + self._get_final_square_reward(new_pos)
         )
-        self.dice_roll: int = 0
-        self.round_count: int = 0
-        self.roll_again: bool = False
-        self.agent_selection: int = 0
-        # member variables
-        self.agents = self.possible_agents
-        self.rewards = {i: 0 for i in self.possible_agents}
-        self._cumulative_rewards = {i: 0 for i in self.possible_agents}
-        self.dones = {i: False for i in self.possible_agents}
-        self.infos = {i: {} for i in self.possible_agents}
+
+    def _get_move_reward(self, player_index: int, action: int, new_pos: int) -> int:
+        """Calculate the reward for moving a token."""
+        distance = new_pos - self.board_state[player_index][action]
+        return distance * self.MOVING_FORCE_REWARD
+
+    def _get_capture_reward(self, captured: bool) -> int:
+        """Calculate the reward for capturing an opponent's token."""
+        return self.CAPTURE_REWARD if captured else 0
+
+    def _get_final_square_reward(self, new_pos: int) -> int:
+        """Calculate the reward for reaching the final square."""
+        return self.ENTERING_PIECE_REWARD if new_pos == self.FINAL_SQUARE else 0
 
     def step(self, action: int) -> None:
         if (
@@ -79,97 +121,94 @@ class LudoEnv(AECEnv):
 
         self.round_count += 1
         player_index = self.agent_selection
+        self.dice_roll = self._roll_dice()
+        self._update_game_state(player_index, action)
 
-        # Roll the dice at the beginning of each turn
-        self.dice_roll = np.random.randint(1, 7)
-
+    def _update_game_state(self, player_index: int, action: int) -> None:
+        """Update the game state after a player's move."""
         new_pos = self._calculate_new_position(
-            self.state[player_index][action], self.dice_roll
+            self.board_state[player_index][action], self.dice_roll
         )
-        # check if piece is captured
         captured = self._check_capture(player_index, new_pos)
-        # reward for how much the piece moves
-        # should reward entering a piece more than moving
-        distance = new_pos - self.state[player_index][action]
-        # check if piece is in final square
-        in_final = self.state[player_index][action] == FINAL_SQUARE
+        self.board_state[player_index][action] = new_pos
 
-        self.state[player_index][action] = new_pos
+        reward = self._calculate_reward(player_index, action, new_pos, captured)
+        self.rewards[player_index] = reward
+        self._cumulative_rewards[player_index] += reward
 
-        reward = sum(
-            [
-                captured * self.CAPTURE_REWARD,
-                distance * self.MOVING_FORCE_REWARD,
-                in_final * self.ENTERING_PIECE_REWARD,
-            ]
+        self.roll_again = (
+            self.dice_roll == self.DICE_MAX and not self.terminations[player_index]
         )
-
-        self.rewards[agent] = reward
-        self._cumulative_rewards[agent] += reward
-
-        # Set roll_again flag if dice_roll is 6
-        self.roll_again = self.dice_roll == 6 and not self.terminations[player_index]
-
         if not self.roll_again:
-            # Only change the agent if we're not rolling again
-            self.agent_selection = (self.agent_selection + 1) % NUM_PLAYERS
+            self.agent_selection = (self.agent_selection + 1) % self.NUM_PLAYERS
 
-    def observe(self, agent: int) -> dict:
+    def observe(self, player_index: int) -> dict[str, object]:
         return {
-            "board_state": self.state,
+            "board_state": self.board_state,
             "current_player": self.possible_agents.index(self.agent_selection),
             "last_roll": self.dice_roll,
         }
 
     def render(self) -> None:
+        """Render the current game state to the console."""
         print(
-            str(self.state).replace("\n", " "),
+            str(self.board_state).replace("\n", " "),
             self.round_count,
             f"Current player: {self.agent_selection}",
             f"Last dice roll: {self.dice_roll}",
-            # end="\r",
         )
 
     def _calculate_new_position(self, current_pos: int, steps: int) -> int:
-        if current_pos == OUT_OF_BOUNDS and steps == 6:
-            return START_SQUARE
-        elif current_pos + steps <= FINAL_SQUARE:
+        """Calculate the new position of a token after moving a certain number of steps."""
+        if current_pos == self.OUT_OF_BOUNDS and steps == self.DICE_MAX:
+            return self.START_SQUARE
+        elif current_pos + steps <= self.FINAL_SQUARE:
             return current_pos + steps
         return current_pos
 
-    def _check_capture(self, current_player_index: int, position: int) -> bool:
-        if position == START_SQUARE or position >= 52:
-            return False  # Starting positions are safe
+    def _check_capture(self, current_player_index: int, new_position: int) -> bool:
+        """Check if a capture occurs at the given position and handle it."""
+        if new_position == self.START_SQUARE or new_position >= self.SAFE_POSITION:
+            return False  # Starting positions and safe positions are safe
 
-        for other_player_index in range(NUM_PLAYERS):
-            capture_position = (
-                position + (other_player_index - current_player_index) * 13
-            )
-            if (
-                other_player_index != current_player_index
-                and capture_position in range(1, 52)
+        for other_player_index in range(self.NUM_PLAYERS):
+            if self._is_capture_possible(
+                current_player_index, other_player_index, new_position
             ):
-                for piece in range(NUM_TOKENS):
-                    if self.state[other_player_index][piece] == capture_position:
-                        # Capture occurred
-                        self.state[other_player_index][piece] = OUT_OF_BOUNDS
-                        return True
+                return self._perform_capture(other_player_index, new_position)
 
-        return False  # No capture occurred
+        return False
 
-    def get_playerDone(self, player_index):
-        return bool(np.all(self.state[player_index] == FINAL_SQUARE))
+    def _is_capture_possible(
+        self, current_player_index: int, other_player_index: int, position: int
+    ) -> bool:
+        """Check if a capture is possible for the given players and position."""
+        if other_player_index == current_player_index:
+            return False
+        capture_position = position + (other_player_index - current_player_index) * 13
+        return capture_position in range(1, self.SAFE_POSITION)
 
-    def action_space(self, agent):
-        return self.action_spaces[agent]
+    def _perform_capture(self, other_player_index: int, capture_position: int) -> bool:
+        """Perform the capture action and return True if a capture occurred."""
+        for piece in range(self.NUM_TOKENS):
+            if self.board_state[other_player_index][piece] == capture_position:
+                self.board_state[other_player_index][piece] = self.OUT_OF_BOUNDS
+                return True
+        return False
+
+    def is_player_done(self, player_index: int) -> bool:
+        """Check if a player has finished the game."""
+        return bool(np.all(self.board_state[player_index] == self.FINAL_SQUARE))
 
     @property
     def terminations(self) -> dict[int, bool]:
-        return {player: self.get_playerDone(player) for player in range(NUM_PLAYERS)}
+        return {
+            player: self.is_player_done(player) for player in range(self.NUM_PLAYERS)
+        }
 
     @property
     def truncations(self) -> dict[int, bool]:
-        return {player: False for player in range(NUM_PLAYERS)}
+        return {player: False for player in range(self.NUM_PLAYERS)}
 
 
 if __name__ == "__main__":
