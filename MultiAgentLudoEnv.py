@@ -1,5 +1,4 @@
 import numpy as np
-from typing import Optional
 from pettingzoo import AECEnv
 from gymnasium import spaces
 
@@ -33,23 +32,24 @@ class LudoEnv(AECEnv):
     WIN_REWARD = 100
     ENTERING_PIECE_REWARD = 10
     SAFE_POSITION = 52
+    QUARTER_RUN = 13
 
     metadata = {"render_modes": ["rgb_array"], "name": "ludo_v0"}
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self.possible_agents: list[int] = list(range(self.NUM_PLAYERS))
-        self.action_spaces = self._create_action_spaces()
-        self.observation_spaces = self._create_observation_spaces()
+        self.action_spaces: dict[int, spaces.Space] = self._init_action_spaces()
+        self.observation_spaces: dict[int, spaces.Space] = self._init_observation_spaces()
         self._initialize_game_state()
 
-    def _create_action_spaces(self) -> dict[int, spaces.Space]:
+    def _init_action_spaces(self) -> dict[int, spaces.Space]:
         """Create action spaces for all players."""
         return {
             agent: spaces.Discrete(self.NUM_TOKENS) for agent in self.possible_agents
         }
 
-    def _create_observation_spaces(self) -> dict[int, spaces.Space]:
+    def _init_observation_spaces(self) -> dict[int, spaces.Space]:
         """Create observation spaces for all players."""
         return {
             agent: spaces.Dict(
@@ -60,14 +60,13 @@ class LudoEnv(AECEnv):
                         shape=(self.NUM_PLAYERS, self.NUM_TOKENS),
                         dtype=np.int8,
                     ),
-                    "current_player": spaces.Discrete(self.NUM_PLAYERS),
                     "last_roll": spaces.Discrete(self.DICE_MAX + 1),
                 }
             )
             for agent in self.possible_agents
         }
 
-    def _initialize_game_state(self):
+    def _initialize_game_state(self) -> None:
         """Initialize or reset the game state and member variables."""
         self.board_state: np.ndarray = np.full(
             (self.NUM_PLAYERS, self.NUM_TOKENS), self.OUT_OF_BOUNDS, dtype=np.int8
@@ -80,9 +79,8 @@ class LudoEnv(AECEnv):
         self.rewards = {i: 0 for i in self.possible_agents}
         self._cumulative_rewards = {i: 0 for i in self.possible_agents}
         self.dones = {i: False for i in self.possible_agents}
-        self.infos = {i: {} for i in self.possible_agents}
 
-    def reset(self, seed: Optional[int] = None, options: Optional[dict] = None) -> None:
+    def reset(self, seed: int | None = None, options: dict | None = None) -> None:
         self._initialize_game_state()
 
     def _roll_dice(self) -> int:
@@ -101,7 +99,7 @@ class LudoEnv(AECEnv):
 
     def _get_move_reward(self, player_index: int, action: int, new_pos: int) -> int:
         """Calculate the reward for moving a token."""
-        distance = new_pos - self.board_state[player_index][action]
+        distance = int(new_pos - self.board_state[player_index][action])
         return distance * self.MOVING_FORCE_REWARD
 
     def _get_capture_reward(self, captured: bool) -> int:
@@ -117,7 +115,8 @@ class LudoEnv(AECEnv):
             self.terminations[self.agent_selection]
             or self.truncations[self.agent_selection]
         ):
-            return self._was_dead_step(action)
+            self._was_dead_step(action)
+            return None
 
         self.round_count += 1
         player_index = self.agent_selection
@@ -144,8 +143,7 @@ class LudoEnv(AECEnv):
 
     def observe(self, player_index: int) -> dict[str, object]:
         return {
-            "board_state": self.board_state,
-            "current_player": self.possible_agents.index(self.agent_selection),
+            "board_state": np.roll(self.board_state, -player_index * self.NUM_TOKENS),
             "last_roll": self.dice_roll,
         }
 
@@ -185,7 +183,9 @@ class LudoEnv(AECEnv):
         """Check if a capture is possible for the given players and position."""
         if other_player_index == current_player_index:
             return False
-        capture_position = position + (other_player_index - current_player_index) * 13
+        capture_position = (
+            position + (other_player_index - current_player_index) * self.QUARTER_RUN
+        )
         return capture_position in range(1, self.SAFE_POSITION)
 
     def _perform_capture(self, other_player_index: int, capture_position: int) -> bool:
