@@ -9,7 +9,7 @@ class LudoVisualizer:
     CELL_CENTER_OFFSET = 5
     OFFSET = 7 + 7j  # svg is not centered on 0,0
 
-    def __init__(self, filename="ludo.svg"):
+    def __init__(self, filename:str="ludo.svg") -> None:
         self.steps = [1] * 6 + [2, 3, 4, 5, 6, 7, 7, 7, 6, 5, 4, 3, 2] + [1] * 6 + [0]
         self._initialize_svg_root(filename)  # load the svg to manipulate
         self._initialize_out_of_bounds()  # where to place pieces when out of the game
@@ -48,7 +48,7 @@ class LudoVisualizer:
         if piece_index not in range(-1, 59):
             raise ValueError(f"Invalid piece index. Use [-1,58]. {piece_index}")
 
-    def move_piece(self, player_index: int, piece_num: int, piece_index: int):
+    def move_piece(self, player_index: int, piece_num: int, piece_index: int) -> None:
         self._validate_move_parameters(player_index, piece_num, piece_index)
         coordinate = self._get_piece_coordinate(player_index, piece_num, piece_index)
         x, y = coordinate.real, coordinate.imag
