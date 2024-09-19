@@ -79,7 +79,6 @@ class LudoEnv(AECEnv):
         self.rewards = {i: 0 for i in self.possible_agents}
         self._cumulative_rewards = {i: 0 for i in self.possible_agents}
         self.dones = {i: False for i in self.possible_agents}
-
     def reset(self, seed: int | None = None, options: dict | None = None) -> None:
         self._initialize_game_state()
 
@@ -209,7 +208,10 @@ class LudoEnv(AECEnv):
     @property
     def truncations(self) -> dict[int, bool]:
         return {player: False for player in range(self.NUM_PLAYERS)}
-
+    @property
+    
+    def infos(self) -> dict[int, dict]:
+        return {player: {} for player in range(self.NUM_PLAYERS)}
 
 if __name__ == "__main__":
     env = LudoEnv()
