@@ -90,19 +90,20 @@ class LudoEnv(AECEnv):
         return np.random.randint(self.DICE_MIN, self.DICE_MAX + 1)
 
     def _calculate_reward(
-        self, player_index: int, action: int, new_pos: int, captured: bool
+        self, action: int, new_pos: int, captured: bool
     ) -> int:
         """Calculate the reward for a player's action."""
         return (
-            self._get_move_reward(player_index, action, new_pos)
+            self._get_move_reward( action, new_pos)
             + self._get_capture_reward(captured)
             + self._get_final_square_reward(new_pos)
-            + self._get_winning_reward(player_index)
+            + self._get_winning_reward()
+            + self._get_out_of_bounds_penalty()
         )
 
-    def _get_move_reward(self, player_index: int, action: int, new_pos: int) -> int:
+    def _get_move_reward(self, action: int, new_pos: int) -> int:
         """Calculate the reward for moving a token."""
-        distance = int(new_pos - self.board_state[player_index][action])
+        distance = int(new_pos - self.board_state[self.player_index][action])
         return distance * self.MOVING_FORCE_REWARD
 
     def _get_capture_reward(self, captured: bool) -> int:
@@ -113,9 +114,9 @@ class LudoEnv(AECEnv):
         """Calculate the reward for reaching the final square."""
         return self.ENTERING_PIECE_REWARD if new_pos == self.FINAL_SQUARE else 0
 
-    def _get_winning_reward(self, player_index: int) -> int:
+    def _get_winning_reward(self) -> int:
         """Calculate the reward for winning the game."""
-        return self.WIN_REWARD if self.is_player_done(player_index) else 0
+        return self.WIN_REWARD if self.is_player_done(self.player_index) else 0
 
     def step(self, action: int) -> None:
         if (
@@ -126,24 +127,23 @@ class LudoEnv(AECEnv):
             return None
 
         self.round_count += 1
-        player_index = self.agent_selection
         self.dice_roll = self._roll_dice()
-        self._update_game_state(player_index, action)
+        self._update_game_state(action)
 
-    def _update_game_state(self, player_index: int, action: int) -> None:
+    def _update_game_state(self,action: int) -> None:
         """Update the game state after a player's move."""
         new_pos = self._calculate_new_position(
-            self.board_state[player_index][action], self.dice_roll
+            self.board_state[self.player_index][action], self.dice_roll
         )
-        captured = self._check_capture(player_index, new_pos)
-        self.board_state[player_index][action] = new_pos
+        captured = self._check_capture(self.player_index, new_pos)
+        self.board_state[self.player_index][action] = new_pos
 
-        reward = self._calculate_reward(player_index, action, new_pos, captured)
-        self.rewards[player_index] = reward
-        self._cumulative_rewards[player_index] += reward
+        reward = self._calculate_reward(action, new_pos, captured)
+        self.rewards[self.player_index] = reward
+        self._cumulative_rewards[self.player_index] += reward
 
         self.roll_again = (
-            self.dice_roll == self.DICE_MAX and not self.terminations[player_index]
+            self.dice_roll == self.DICE_MAX and not self.terminations[self.player_index]
         )
         if not self.roll_again:
             self.agent_selection = (self.agent_selection + 1) % self.NUM_PLAYERS
@@ -209,6 +209,10 @@ class LudoEnv(AECEnv):
     def is_player_done(self, player_index: int) -> bool:
         """Check if a player has finished the game."""
         return bool(np.all(self.board_state[player_index] == self.FINAL_SQUARE))
+    
+    def _get_out_of_bounds_penalty(self) -> int:
+        """Small penalty for having tokens out of bounds."""
+        return -1 * int(np.sum(self.board_state[self.player_index] == self.OUT_OF_BOUNDS))
 
     @property
     def terminations(self) -> dict[int, bool]:
@@ -223,6 +227,10 @@ class LudoEnv(AECEnv):
     @property
     def infos(self) -> dict[int, dict]:
         return {player: {} for player in range(self.NUM_PLAYERS)}
+    
+    @property
+    def player_index(self) -> int:
+        return self.agent_selection
 
 
 if __name__ == "__main__":
