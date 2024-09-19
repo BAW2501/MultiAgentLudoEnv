@@ -40,7 +40,9 @@ class LudoEnv(AECEnv):
         super().__init__()
         self.possible_agents: list[int] = list(range(self.NUM_PLAYERS))
         self.action_spaces: dict[int, spaces.Space] = self._init_action_spaces()
-        self.observation_spaces: dict[int, spaces.Space] = self._init_observation_spaces()
+        self.observation_spaces: dict[int, spaces.Space] = (
+            self._init_observation_spaces()
+        )
         self._initialize_game_state()
 
     def _init_action_spaces(self) -> dict[int, spaces.Space]:
@@ -79,6 +81,7 @@ class LudoEnv(AECEnv):
         self.rewards = {i: 0 for i in self.possible_agents}
         self._cumulative_rewards = {i: 0 for i in self.possible_agents}
         self.dones = {i: False for i in self.possible_agents}
+
     def reset(self, seed: int | None = None, options: dict | None = None) -> None:
         self._initialize_game_state()
 
@@ -94,6 +97,7 @@ class LudoEnv(AECEnv):
             self._get_move_reward(player_index, action, new_pos)
             + self._get_capture_reward(captured)
             + self._get_final_square_reward(new_pos)
+            + self._get_winning_reward(player_index)
         )
 
     def _get_move_reward(self, player_index: int, action: int, new_pos: int) -> int:
@@ -108,6 +112,10 @@ class LudoEnv(AECEnv):
     def _get_final_square_reward(self, new_pos: int) -> int:
         """Calculate the reward for reaching the final square."""
         return self.ENTERING_PIECE_REWARD if new_pos == self.FINAL_SQUARE else 0
+
+    def _get_winning_reward(self, player_index: int) -> int:
+        """Calculate the reward for winning the game."""
+        return self.WIN_REWARD if self.is_player_done(player_index) else 0
 
     def step(self, action: int) -> None:
         if (
@@ -182,10 +190,13 @@ class LudoEnv(AECEnv):
         """Check if a capture is possible for the given players and position."""
         if other_player_index == current_player_index:
             return False
+        is_safe_quarter_square = position % self.QUARTER_RUN == self.START_SQUARE
+
         capture_position = (
             position + (other_player_index - current_player_index) * self.QUARTER_RUN
         )
-        return capture_position in range(1, self.SAFE_POSITION)
+
+        return not is_safe_quarter_square and capture_position in range(1, self.SAFE_POSITION)
 
     def _perform_capture(self, other_player_index: int, capture_position: int) -> bool:
         """Perform the capture action and return True if a capture occurred."""
@@ -208,10 +219,11 @@ class LudoEnv(AECEnv):
     @property
     def truncations(self) -> dict[int, bool]:
         return {player: False for player in range(self.NUM_PLAYERS)}
+
     @property
-    
     def infos(self) -> dict[int, dict]:
         return {player: {} for player in range(self.NUM_PLAYERS)}
+
 
 if __name__ == "__main__":
     env = LudoEnv()
