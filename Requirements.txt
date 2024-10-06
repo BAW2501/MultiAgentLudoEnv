@@ -1,3 +1,5 @@
 gymnasium
 pettingzoo
 numpy
+setuptools
+types-setuptools
