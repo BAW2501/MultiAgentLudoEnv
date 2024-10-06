@@ -1,4 +1,5 @@
 import xml.etree.ElementTree as ET
+from pathlib import Path
 
 
 class LudoVisualizer:
@@ -9,9 +10,11 @@ class LudoVisualizer:
     CELL_CENTER_OFFSET = 5
     OFFSET = 7 + 7j  # svg is not centered on 0,0
 
-    def __init__(self, filename:str="ludo.svg") -> None:
+    def __init__(self, filename: str = "ludo.svg") -> None:
+        file_root = Path(__file__).parent / filename
+        print(f"Loading SVG from {file_root}")
         self.steps = [1] * 6 + [2, 3, 4, 5, 6, 7, 7, 7, 6, 5, 4, 3, 2] + [1] * 6 + [0]
-        self._initialize_svg_root(filename)  # load the svg to manipulate
+        self._initialize_svg_root(file_root)  # load the svg to manipulate
         self._initialize_out_of_bounds()  # where to place pieces when out of the game
         self._initialize_end_positions()  # colored squares except starting one
         self.players = list(self.root[12][4:])  # Initialize player positions from SVG
