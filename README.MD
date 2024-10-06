@@ -18,14 +18,22 @@ This project implements a Ludo board game environment using the Gymnasium framew
 
 ## Installation
 
-1. Ensure you have Python 3.7 or later installed.
+1. Ensure you have Python 3.12 or later installed.
 2. Install the required dependency:
 
    ```
-   pip install gymnasium
+    python -m venv venv
+    source venv/bin/activate  # On Windows, use `venv\Scripts\activate`
+    pip install -r requirements.txt
+    pip install -e .
    ```
+   additionally, you may want to use the notebooks this requires intalling ipykernel
 
-3. Copy the `MultiAgentLudoEnv` class into your project.
+   ```
+   pip install ipykernel
+   ipython kernel install --user --name=MultiAgentLudoEnv
+   ```
+   you may need to set the venv from vscode kernel options
 
 ## Usage
 
