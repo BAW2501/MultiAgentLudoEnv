@@ -1,1 +1,1 @@
-from Ludo.envs.MultiAgentLudoEnv import LudoEnv
+from .MultiAgentLudoEnv import LudoEnv
