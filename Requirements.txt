@@ -1,5 +1,6 @@
 gymnasium
 pettingzoo
 numpy
+pygame
 setuptools
 types-setuptools
