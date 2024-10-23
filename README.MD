@@ -2,7 +2,7 @@
 
 This project implements a Ludo board game environment using the Gymnasium framework. It provides a multi-agent reinforcement learning environment for the classic board game Ludo.
 
-![Ludo](ludo.svg)
+![Ludo](Ludo/utils/ludo.svg)
 
 ## Features
 
