@@ -9,13 +9,13 @@ from tianshou.trainer import offpolicy_trainer
 from tianshou.utils.net.common import Net
 from pettingzoo.utils.wrappers import BaseWrapper
 
-# Import your Ludo environment
-from Ludo.envs import LudoEnv
+# Import Ludo environment
+from Ludo.envs import FlatLudoEnv
 
 
 def _get_env():
     """This function is needed to provide callables for DummyVectorEnv."""
-    return PettingZooEnv(BaseWrapper(LudoEnv()))
+    return PettingZooEnv(BaseWrapper(FlatLudoEnv()))
 
 
 def _get_agents() -> tuple[BasePolicy, torch.optim.Optimizer, list]:
