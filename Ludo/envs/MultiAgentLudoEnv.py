@@ -1,3 +1,4 @@
+import functools
 import numpy as np
 from pettingzoo import AECEnv
 from gymnasium import spaces
@@ -45,28 +46,31 @@ class LudoEnv(AECEnv):
         )
         self._initialize_game_state()
 
+    @functools.lru_cache(maxsize=NUM_PLAYERS)
+    def action_space(self, agent: int) -> spaces.Discrete:
+        return spaces.Discrete(self.NUM_TOKENS)
+
+    @functools.lru_cache(maxsize=NUM_PLAYERS)
+    def observation_space(self, agent: int) -> spaces.Dict:
+        return spaces.Dict(
+            {
+                "board_state": spaces.Box(
+                    low=self.OUT_OF_BOUNDS,
+                    high=self.FINAL_SQUARE,
+                    shape=(self.NUM_PLAYERS, self.NUM_TOKENS),
+                    dtype=np.int8,
+                ),
+                "last_roll": spaces.Discrete(self.DICE_MAX + 1),
+            }
+        )
+
     def _init_action_spaces(self) -> dict[int, spaces.Space]:
         """Create action spaces for all players."""
-        return {
-            agent: spaces.Discrete(self.NUM_TOKENS) for agent in self.possible_agents
-        }
+        return {agent: self.action_space(agent) for agent in self.possible_agents}
 
     def _init_observation_spaces(self) -> dict[int, spaces.Space]:
         """Create observation spaces for all players."""
-        return {
-            agent: spaces.Dict(
-                {
-                    "board_state": spaces.Box(
-                        low=self.OUT_OF_BOUNDS,
-                        high=self.FINAL_SQUARE,
-                        shape=(self.NUM_PLAYERS, self.NUM_TOKENS),
-                        dtype=np.int8,
-                    ),
-                    "last_roll": spaces.Discrete(self.DICE_MAX + 1),
-                }
-            )
-            for agent in self.possible_agents
-        }
+        return {agent: self.observation_space(agent) for agent in self.possible_agents}
 
     def _initialize_game_state(self) -> None:
         """Initialize or reset the game state and member variables."""
@@ -89,12 +93,10 @@ class LudoEnv(AECEnv):
         """Roll the dice and return the result."""
         return np.random.randint(self.DICE_MIN, self.DICE_MAX + 1)
 
-    def _calculate_reward(
-        self, action: int, new_pos: int, captured: bool
-    ) -> int:
+    def _calculate_reward(self, action: int, new_pos: int, captured: bool) -> int:
         """Calculate the reward for a player's action."""
         return (
-            self._get_move_reward( action, new_pos)
+            self._get_move_reward(action, new_pos)
             + self._get_capture_reward(captured)
             + self._get_final_square_reward(new_pos)
             + self._get_winning_reward()
@@ -130,7 +132,7 @@ class LudoEnv(AECEnv):
         self.dice_roll = self._roll_dice()
         self._update_game_state(action)
 
-    def _update_game_state(self,action: int) -> None:
+    def _update_game_state(self, action: int) -> None:
         """Update the game state after a player's move."""
         new_pos = self._calculate_new_position(
             self.board_state[self.player_index][action], self.dice_roll
@@ -196,7 +198,9 @@ class LudoEnv(AECEnv):
             position + (other_player_index - current_player_index) * self.QUARTER_RUN
         )
 
-        return not is_safe_quarter_square and capture_position in range(1, self.SAFE_POSITION)
+        return not is_safe_quarter_square and capture_position in range(
+            1, self.SAFE_POSITION
+        )
 
     def _perform_capture(self, other_player_index: int, capture_position: int) -> bool:
         """Perform the capture action and return True if a capture occurred."""
@@ -209,10 +213,12 @@ class LudoEnv(AECEnv):
     def is_player_done(self, player_index: int) -> bool:
         """Check if a player has finished the game."""
         return bool(np.all(self.board_state[player_index] == self.FINAL_SQUARE))
-    
+
     def _get_out_of_bounds_penalty(self) -> int:
         """Small penalty for having tokens out of bounds."""
-        return -1 * int(np.sum(self.board_state[self.player_index] == self.OUT_OF_BOUNDS))
+        return -1 * int(
+            np.sum(self.board_state[self.player_index] == self.OUT_OF_BOUNDS)
+        )
 
     @property
     def terminations(self) -> dict[int, bool]:
@@ -227,7 +233,7 @@ class LudoEnv(AECEnv):
     @property
     def infos(self) -> dict[int, dict]:
         return {player: {} for player in range(self.NUM_PLAYERS)}
-    
+
     @property
     def player_index(self) -> int:
         return self.agent_selection
@@ -244,7 +250,7 @@ if __name__ == "__main__":
             print(f"Agent {agent} has reached the final square.")
             break
         # this is where you would insert your policy
-        action = env.action_space(agent).sample()
+        action = int(env.action_space(agent).sample())
         env.step(action)
         env.render()
     env.close()
