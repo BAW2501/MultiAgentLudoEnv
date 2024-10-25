@@ -19,7 +19,7 @@ class LudoVisualizer:
         self._initialize_end_positions()  # colored squares except starting one
         self.players = list(self.root[12][4:])  # Initialize player positions from SVG
 
-    def _initialize_svg_root(self, svg_filename: str) -> None:
+    def _initialize_svg_root(self, svg_filename: str | Path) -> None:
         with open(svg_filename, "r") as svg_file:
             self.svg_string = svg_file.read()
         ET.register_namespace("", "http://www.w3.org/2000/svg")
