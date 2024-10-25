@@ -70,8 +70,6 @@ class LudoPygameVisualizer:
             x = int(point.real) + 7
             y = int(point.imag) + 7
             positions.append((x, y))
-        print(positions[-1])
-        print(self._init_final_positions()[0][0])
         return positions
 
     def _calculate_coordinate_signs(
