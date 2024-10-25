@@ -4,3 +4,7 @@ numpy
 pygame
 setuptools
 types-setuptools
+tianshou
+torch 
+torchvision 
+torchaudio
