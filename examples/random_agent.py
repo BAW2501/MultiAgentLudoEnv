@@ -22,6 +22,6 @@ if __name__ == "__main__":
             break
         # this is where you would insert your policy
         action = env.action_space(agent).sample()
-        env.step(action)
+        env.step(int(action))
         env.render()
     env.close()

@@ -2,6 +2,8 @@ import functools
 import numpy as np
 from pettingzoo import AECEnv
 from gymnasium import spaces
+from pettingzoo.test import api_test
+
 
 """
 Ludo Game Rules:
@@ -34,8 +36,12 @@ class LudoEnv(AECEnv):
     ENTERING_PIECE_REWARD = 10
     SAFE_POSITION = 52
     QUARTER_RUN = 13
+    render_mode = "human"
 
-    metadata = {"render_modes": ["rgb_array"], "name": "ludo_v0"}
+    metadata = {
+        "render_modes": ["rgb_array"],
+        "name": "ludo_v0",
+    }
 
     def __init__(self) -> None:
         super().__init__()
@@ -54,13 +60,17 @@ class LudoEnv(AECEnv):
     def observation_space(self, agent: int) -> spaces.Dict:
         return spaces.Dict(
             {
-                "board_state": spaces.Box(
-                    low=self.OUT_OF_BOUNDS,
-                    high=self.FINAL_SQUARE,
-                    shape=(self.NUM_PLAYERS, self.NUM_TOKENS),
-                    dtype=np.int8,
-                ),
-                "last_roll": spaces.Discrete(self.DICE_MAX + 1),
+                "observation": spaces.Dict(
+                    {
+                        "board_state": spaces.Box(
+                            low=self.OUT_OF_BOUNDS,
+                            high=self.FINAL_SQUARE,
+                            shape=(self.NUM_PLAYERS, self.NUM_TOKENS),
+                            dtype=np.int8,
+                        ),
+                        "last_roll": spaces.Discrete(self.DICE_MAX + 1),
+                    }
+                )
             }
         )
 
@@ -152,8 +162,12 @@ class LudoEnv(AECEnv):
 
     def observe(self, player_index: int) -> dict[str, object]:
         return {
-            "board_state": np.roll(self.board_state, -player_index * self.NUM_TOKENS),
-            "last_roll": self.dice_roll,
+            "observation": {
+                "board_state": np.roll(
+                    self.board_state, -player_index * self.NUM_TOKENS
+                ),
+                "last_roll": self.dice_roll,
+            }
         }
 
     def render(self) -> None:
@@ -241,16 +255,18 @@ class LudoEnv(AECEnv):
 
 if __name__ == "__main__":
     env = LudoEnv()
-    env.reset(seed=42)
+    api_test(env)
 
-    for agent in env.agent_iter():
-        observation, reward, termination, truncation, info = env.last()
+    # env.reset(seed=42)
 
-        if termination or truncation:
-            print(f"Agent {agent} has reached the final square.")
-            break
-        # this is where you would insert your policy
-        action = int(env.action_space(agent).sample())
-        env.step(action)
-        env.render()
-    env.close()
+    # for agent in env.agent_iter():
+    #     observation, reward, termination, truncation, info = env.last()
+
+    #     if termination or truncation:
+    #         print(f"Agent {agent} has reached the final square.")
+    #         break
+    #     # this is where you would insert your policy
+    #     action = int(env.action_space(agent).sample())
+    #     env.step(action)
+    #     env.render()
+    # env.close()
