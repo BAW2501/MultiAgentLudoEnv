@@ -3,7 +3,14 @@ import time
 from Ludo.envs.MultiAgentLudoEnv import LudoEnv
 
 
+EXPLORATION_DEFAULT = 1.41
+DEFAULT_TIME_LIMIT = 1.0 # how long to run MCTS agent to make a move
+INFINITY = float("inf")
+
+
 class Node:
+    """Represents a node in the Monte Carlo Search Tree"""
+
     def __init__(self, state, agent_id, parent=None, action=None):
         self.state = state
         self.agent_id = agent_id
@@ -16,12 +23,13 @@ class Node:
     def is_fully_expanded(self):
         return len(self.children) == LudoEnv.NUM_TOKENS
 
-    def select_best_child(self, exploration_constant=1.41):
+    def get_best_child(self, exploration_constant=EXPLORATION_DEFAULT):
+        """Calculates UCB value for node selection"""
         best_child = None
-        best_ucb = -float("inf")
+        best_ucb = -INFINITY
         for child in self.children:
             if child.visits == 0:
-                ucb = float("inf")
+                ucb = INFINITY
             else:
                 ucb = child.value / child.visits + exploration_constant * np.sqrt(
                     np.log(self.visits) / child.visits
@@ -67,7 +75,11 @@ class Node:
 
 
 class MCTS:
-    def __init__(self, exploration_constant=1.41, time_limit=1.0):
+    """Implements Monte Carlo Tree Search algorithm"""
+
+    def __init__(
+        self, exploration_constant=EXPLORATION_DEFAULT, time_limit=DEFAULT_TIME_LIMIT
+    ):
         self.exploration_constant = exploration_constant
         self.time_limit = time_limit
 
@@ -80,8 +92,7 @@ class MCTS:
             reward = self.simulate(node)
             node.backpropagate(reward)
 
-        best_child = root_node.select_best_child(0)  # Exploitation only
-        return best_child.action
+        return root_node.get_best_child(0).action  # Exploitation only
 
     def select(self, node):
         while not node.is_terminal():
@@ -89,153 +100,151 @@ class MCTS:
                 node.expand()
                 return node.children[0]
             else:
-                node = node.select_best_child(self.exploration_constant)
+                node = node.get_best_child(self.exploration_constant)
         return node
 
     def simulate(self, node):
+        env = self._initialize_simulation_env(node)
 
+        while True:
+            if self._is_game_over(env, node):
+                return self._calculate_reward(env, node)
+
+            if env.agent_selection == node.agent_id:
+                self._process_agent_turn(env)
+            else:
+                self._process_opponent_turn(env)
+
+    def _initialize_simulation_env(self, node):
+        """Initialize a new environment for simulation"""
         env = LudoEnv()
         env.board_state = node.state["observation"]["board_state"].copy()
         env.dice_roll = node.state["observation"]["last_roll"]
         env.round_count = node.state["round_count"]
         env.agent_selection = node.agent_id
+        return env
 
-        while True:
+    def _is_game_over(self, env, node):
+        """Check if the game has ended"""
+        return (
+            env.terminations[env.agent_selection]
+            or env.truncations[env.agent_selection]
+        )
 
-            if (
-                env.terminations[env.agent_selection]
-                or env.truncations[env.agent_selection]
-            ):
-                if env.agent_selection == node.agent_id:
+    def _calculate_reward(self, env, node):
+        """Calculate the reward for the current game state"""
+        if env.agent_selection == node.agent_id:
+            return (
+                1
+                if np.all(env.board_state[env.agent_selection] == LudoEnv.FINAL_SQUARE)
+                else 0
+            )
+        return 0
 
-                    return (
-                        1
-                        if np.all(
-                            env.board_state[env.agent_selection] == LudoEnv.FINAL_SQUARE
-                        )
-                        else 0
-                    )  # return 1 if win else 0
-                else:
-                    return 0  # not our turn so no reward
-            if env.agent_selection == node.agent_id:
+    def _process_agent_turn(self, env):
+        """Process a single turn for the MCTS agent"""
+        env.dice_roll = env._roll_dice()
+        possible_moves = self._get_possible_moves(env)
+        action = self._select_action(possible_moves)
+        self._execute_move(env, action)
 
-                env.dice_roll = env._roll_dice()
+    def _process_opponent_turn(self, env):
+        """Process a single turn for the opponent"""
+        env.dice_roll = env._roll_dice()
+        possible_moves = self._get_possible_moves(env)
+        action = self._select_action(possible_moves)
+        self._execute_move(env, action)
 
-                possible_moves = []
-                for action in range(LudoEnv.NUM_TOKENS):
-
-                    new_pos = env._calculate_new_position(
-                        env.board_state[env.agent_selection][action], env.dice_roll
-                    )
-                    if new_pos != env.board_state[env.agent_selection][action]:
-
-                        possible_moves.append(action)
-
-                if not possible_moves:
-
-                    action = 0  # no choice pass turn
-                else:
-                    action = np.random.choice(possible_moves)
-
-                new_pos = env._calculate_new_position(
-                    env.board_state[env.agent_selection][action], env.dice_roll
-                )
-                captured = env._check_capture(env.agent_selection, new_pos)
-                env.board_state[env.agent_selection][action] = new_pos
-
-                env.roll_again = (
-                    env.dice_roll == env.DICE_MAX
-                    and not env.terminations[env.agent_selection]
-                )
-                if not env.roll_again:
-                    env.agent_selection = (env.agent_selection + 1) % env.NUM_PLAYERS
-
-            else:
-
-                env.dice_roll = env._roll_dice()
-
-                possible_moves = []
-                for action in range(LudoEnv.NUM_TOKENS):
-
-                    new_pos = env._calculate_new_position(
-                        env.board_state[env.agent_selection][action], env.dice_roll
-                    )
-                    if new_pos != env.board_state[env.agent_selection][action]:
-
-                        possible_moves.append(action)
-
-                if not possible_moves:
-
-                    action = 0  # no choice pass turn
-                else:
-                    action = np.random.choice(possible_moves)
-
-                new_pos = env._calculate_new_position(
-                    env.board_state[env.agent_selection][action], env.dice_roll
-                )
-                captured = env._check_capture(env.agent_selection, new_pos)
-                env.board_state[env.agent_selection][action] = new_pos
-
-                env.roll_again = (
-                    env.dice_roll == env.DICE_MAX
-                    and not env.terminations[env.agent_selection]
-                )
-                if not env.roll_again:
-                    env.agent_selection = (env.agent_selection + 1) % env.NUM_PLAYERS
-
-
-class RandomAgent:
-    def __init__(self, agent_id):
-        self.agent_id = agent_id
-
-    def get_action(self, env, observation):
-
+    def _get_possible_moves(self, env):
+        """Calculate all possible moves for current state"""
         possible_moves = []
         for action in range(LudoEnv.NUM_TOKENS):
-
             new_pos = env._calculate_new_position(
                 env.board_state[env.agent_selection][action], env.dice_roll
             )
             if new_pos != env.board_state[env.agent_selection][action]:
+                possible_moves.append(action)
+        return possible_moves
 
+    def _select_action(self, possible_moves):
+        """Select an action from possible moves"""
+        if not possible_moves:
+            return 0  # no choice, pass turn
+        return np.random.choice(possible_moves)
+
+    def _execute_move(self, env, action):
+        """Execute the selected move and update game state"""
+        new_pos = env._calculate_new_position(
+            env.board_state[env.agent_selection][action], env.dice_roll
+        )
+        captured = env._check_capture(env.agent_selection, new_pos)
+        env.board_state[env.agent_selection][action] = new_pos
+
+        env.roll_again = (
+            env.dice_roll == env.DICE_MAX and not env.terminations[env.agent_selection]
+        )
+        if not env.roll_again:
+            env.agent_selection = (env.agent_selection + 1) % env.NUM_PLAYERS
+
+
+class RandomAgent:
+    """Implements a baseline random movement strategy"""
+
+    def __init__(self, agent_id):
+        self.agent_id = agent_id
+
+    def select_move(self, env, observation):
+        """Select a random valid move from all possible moves"""
+        possible_moves = []
+        for action in range(LudoEnv.NUM_TOKENS):
+            new_pos = env._calculate_new_position(
+                env.board_state[env.agent_selection][action], env.dice_roll
+            )
+            if new_pos != env.board_state[env.agent_selection][action]:
                 possible_moves.append(action)
 
         if not possible_moves:
+            return 0  # no choice, pass turn
+        return np.random.choice(possible_moves)
 
-            return 0  # no choice pass turn
+
+def main():
+    """Main game loop"""
+    env = LudoEnv()
+    env.reset()
+
+    # Initialize agents
+    mcts_agent = MCTS(time_limit=DEFAULT_TIME_LIMIT)
+    random_agents = [RandomAgent(i) for i in range(1, LudoEnv.NUM_PLAYERS)]
+
+    while True:
+        observation, reward, termination, truncation, info = env.last()
+
+        if termination or truncation:
+            print("Game Over!")
+            for agent_id, done in env.terminations.items():
+                if done:
+                    print(f"Agent {agent_id} has won!")
+                    env.reset()
+                    break
+            continue
+
+        if env.agent_selection == 0:
+            # MCTS agent's turn
+            root_state = {
+                "observation": env.observe(0)["observation"],
+                "round_count": env.round_count,
+            }
+            action = mcts_agent.search(root_state, 0)
         else:
-            return np.random.choice(possible_moves)
+            # Random agent's turn
+            action = random_agents[env.agent_selection - 1].select_move(
+                env, observation
+            )
+
+        env.step(action)
+        env.render()
 
 
-# Example Usage
-env = LudoEnv()
-env.reset()
-
-# Initialize agents
-mcts_agent = MCTS(time_limit=1.0)
-random_agents = [RandomAgent(i) for i in range(1, LudoEnv.NUM_PLAYERS)]
-
-while True:
-    observation, reward, termination, truncation, info = env.last()
-    if termination or truncation:
-        print("Game Over!")
-        for agent_id, done in env.terminations.items():
-            if done:
-                print(f"Agent {agent_id} has won!")
-                env.reset()
-                break
-        continue
-
-    if env.agent_selection == 0:
-        # MCTS agent's turn
-        root_state = {
-            "observation": env.observe(0)["observation"],  # Corrected line
-            "round_count": env.round_count,
-        }
-        action = mcts_agent.search(root_state, 0)
-    else:
-        # Random agent's turn
-        action = random_agents[env.agent_selection - 1].get_action(env, observation)
-
-    env.step(action)
-    env.render()
+if __name__ == "__main__":
+    main()
